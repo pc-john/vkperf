@@ -1,4 +1,6 @@
-set(APP_NAME VulkanRenderingPerformance)
+cmake_minimum_required(VERSION 3.21)
+
+set(APP_NAME vkperf)
 
 project(${APP_NAME})
 
@@ -82,6 +84,7 @@ set(APP_SHADERS
 	phongNoSpecularSingleUniform.frag
 	)
 
+include(CMakeMacros.cmake)
 add_shaders("${APP_SHADERS}" APP_SHADER_DEPS)
 add_executable(${APP_NAME} ${APP_SOURCES} ${APP_INCLUDES} ${APP_SHADER_DEPS})
 
@@ -92,8 +95,10 @@ if(UNIX)
 	set(deps Vulkan::Vulkan X11)
 elseif(WIN32)
 	set(deps Vulkan::Vulkan)
+	target_compile_definitions(${APP_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 target_include_directories(${APP_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(${APP_NAME} ${deps})
-set_property(TARGET ${APP_NAME} PROPERTY FOLDER "${examples_folder_name}")
+set_property(TARGET ${APP_NAME} PROPERTY CXX_STANDARD 17)
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT "${APP_NAME}")
