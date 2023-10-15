@@ -98,7 +98,7 @@ elseif(WIN32)
 	target_compile_definitions(${APP_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-target_include_directories(${APP_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(${APP_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 target_link_libraries(${APP_NAME} ${deps})
 set_property(TARGET ${APP_NAME} PROPERTY CXX_STANDARD 17)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT "${APP_NAME}")
