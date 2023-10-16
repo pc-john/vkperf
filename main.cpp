@@ -18,54 +18,26 @@ using namespace std;
 
 
 // constants
-static const string appName = "VulkanRenderingPerformance";
+static const string appName = "vkperf";
+static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
 
 
 // Vulkan instance
 // (must be destructed as the last one, at least on Linux, it must be destroyed after display connection)
 static vk::UniqueInstance instance;
 
-// windowing variables
-#ifdef _WIN32
-static HWND window=nullptr;
-struct Win32Cleaner {
-	~Win32Cleaner() {
-		if(window) {
-			DestroyWindow(window);
-			UnregisterClass("RenderingWindow",GetModuleHandle(NULL));
-		}
-	}
-} win32Cleaner;
-#else
-static Display* display=nullptr;
-static Window window=0;
-struct XlibCleaner {
-	~XlibCleaner() {
-		if(window)  XDestroyWindow(display,window);
-		if(display)  XCloseDisplay(display);
-	}
-} xlibCleaner;
-Atom wmDeleteMessage;
-#endif
-static vk::Extent2D currentSurfaceExtent(0,0);
-static vk::Extent2D windowSize;
-static bool needResize=true;
-
 // Vulkan handles and objects
 // (they need to be placed in particular (not arbitrary) order as it gives their destruction order)
-static vk::UniqueSurfaceKHR surface;
 static vk::PhysicalDevice physicalDevice;
 static vk::PhysicalDeviceProperties physicalDeviceProperties;
 static vector<vk::ExtensionProperties> physicalDeviceExtensions;
 static uint32_t graphicsQueueFamily;
-static uint32_t presentationQueueFamily;
 static uint32_t sparseQueueFamily;
 static vk::PhysicalDeviceFeatures enabledFeatures;
 static vk::UniqueDevice device;
 static vk::Queue graphicsQueue;
-static vk::Queue presentationQueue;
 static vk::Queue sparseQueue;
-static vk::SurfaceFormatKHR chosenSurfaceFormat;
+static constexpr const vk::Format colorFormat = vk::Format::eR8G8B8A8Srgb;
 static vk::Format depthFormat;
 static vk::UniqueRenderPass renderPass;
 static vk::UniqueShaderModule attributelessConstantOutputVS;
@@ -247,11 +219,14 @@ static vk::DescriptorSet phongTexturedThreeDMatricesUsingGSAndAttributesDescript
 static vk::DescriptorSet phongTexturedDescriptorSet;
 static vk::DescriptorSet phongTexturedNotPackedDescriptorSet;
 static vk::DescriptorSet allInOneLightingUniformDescriptorSet;
-static vk::UniqueSwapchainKHR swapchain;
-static vector<vk::UniqueImageView> swapchainImageViews;
+static vk::UniqueFramebuffer framebuffer;
+static vk::UniqueImage colorImage;
 static vk::UniqueImage depthImage;
+static vk::UniqueDeviceMemory colorImageMemory;
 static vk::UniqueDeviceMemory depthImageMemory;
+static vk::UniqueImageView colorImageView;
 static vk::UniqueImageView depthImageView;
+static vk::UniqueFence fence;
 static vk::UniquePipeline attributelessConstantOutputPipeline;
 static vk::UniquePipeline attributelessInputIndicesPipeline;
 static vk::UniquePipeline coordinateAttributePipeline;
@@ -318,11 +293,8 @@ static vk::UniquePipeline fillrateUniformColor4fPipeline;
 static vk::UniquePipeline fillrateUniformColor4bPipeline;
 static vk::UniquePipeline phongNoSpecularPipeline;
 static vk::UniquePipeline phongNoSpecularSingleUniformPipeline;
-static vector<vk::UniqueFramebuffer> framebuffers;
 static vk::UniqueCommandPool commandPool;
 static vk::UniqueCommandBuffer commandBuffer;
-static vk::UniqueSemaphore imageAvailableSemaphore;
-static vk::UniqueSemaphore renderFinishedSemaphore;
 static vk::UniqueBuffer coordinate4Attribute;
 static vk::UniqueBuffer coordinate4Buffer;
 static vk::UniqueBuffer coordinate3Attribute;
@@ -419,7 +391,8 @@ static const uint32_t numTrianglesReduced=uint32_t(1*1e5);
 static uint32_t numTriangles;
 static bool minimalTest=false;
 static bool longTest=false;
-static vk::Extent2D renderingExtent(1366,768);  // HD resultion (it should always fit to FullHD screen, even with window captions, taskbar, etc.)
+static bool debug=false;
+static vk::Extent2D framebufferExtent(0,0);
 static size_t sameDMatrixStagingBufferSize;
 static const unsigned triangleSize=0;
 static uint32_t numFullscreenQuads=10; // note: if you increase the value, make sure that fullscreenQuad*.vert is still drawing to the clip space (by gl_InstanceIndex)
@@ -661,7 +634,7 @@ struct Test {
 		size_t numTransfers;
 	};
 	size_t transferSize;
-	typedef void (*Func)(vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t groupVariable);
+	typedef void (*Func)(vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t groupVariable);
 	Func func;
 	Test(const char* text_, Type t, Func func_) : text(text_), type(t), func(func_)  {}
 	Test(const char* groupText_, uint32_t groupVariable_, const char* text_, Type t, Func func_) : groupText(groupText_), groupVariable(groupVariable_), text(text_), type(t), func(func_)  {}
@@ -691,16 +664,15 @@ static void beginTestBarrier(vk::CommandBuffer cb)
 
 
 static void beginTest(
-	vk::CommandBuffer cb, vk::Framebuffer framebuffer, vk::Extent2D currentSurfaceExtent,
-	vk::Pipeline pipeline, vk::PipelineLayout pipelineLayout, uint32_t& timestampIndex,
+	vk::CommandBuffer cb, vk::Pipeline pipeline, vk::PipelineLayout pipelineLayout, uint32_t& timestampIndex,
 	const vector<vk::Buffer>& attributes, const vector<vk::DescriptorSet>& descriptorSets)
 {
 	beginTestBarrier(cb);
 	cb.beginRenderPass(
 		vk::RenderPassBeginInfo(
 			renderPass.get(),         // renderPass
-			framebuffer,              // framebuffer
-			vk::Rect2D(vk::Offset2D(0,0),currentSurfaceExtent),  // renderArea
+			framebuffer.get(),        // framebuffer
+			vk::Rect2D(vk::Offset2D(0,0),framebufferExtent),  // renderArea
 			2,                        // clearValueCount
 			array<vk::ClearValue,2>{  // pClearValues
 				vk::ClearColorValue(array<float,4>{0.f,0.f,0.f,1.f}),
@@ -751,11 +723,10 @@ static void initTests()
 	Test(
 		"   Test just to warm up GPU. The test shall be invisible to the user.",
 		Test::Type::WarmUp,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			// render something to put GPU out of power saving states
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-					  coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
 					  vector<vk::Buffer>{ coordinate4Attribute.get() },
 					  vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles,1,0,0);
@@ -767,10 +738,9 @@ static void initTests()
 		"   VS max throughput (one draw call, attributeless,\n"
 		"      constant VS output):                     ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -781,10 +751,9 @@ static void initTests()
 		"   VS VertexIndex and InstanceIndex forming output\n"
 		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -795,11 +764,10 @@ static void initTests()
 		"   GS max throughput (geometry shader no output,\n"
 		"      one draw call, attributeless):           ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          geometryShaderNoOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				beginTest(cb, geometryShaderNoOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>(),
 				          vector<vk::DescriptorSet>());
 				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -824,11 +792,10 @@ static void initTests()
 		"   GS max throughput (geometry shader constant output,\n"
 		"      one draw call, attributeless):           ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          geometryShaderConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				beginTest(cb, geometryShaderConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>(),
 				          vector<vk::DescriptorSet>());
 				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -854,11 +821,11 @@ static void initTests()
 		"      of two separate triangles, one draw call,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          geometryShaderConstantOutputTwoTrianglesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				beginTest(cb, geometryShaderConstantOutputTwoTrianglesPipeline.get(),
+				          simplePipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>(),
 				          vector<vk::DescriptorSet>());
 				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -884,10 +851,9 @@ static void initTests()
 		"      constant VS output, one draw call,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(3, numTriangles, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -899,10 +865,9 @@ static void initTests()
 		"      one indirect draw call, one indirect record,\n"
 		"      attributeless:                           ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.drawIndirect(indirectBuffer.get(),  // buffer
@@ -917,10 +882,9 @@ static void initTests()
 		"      per-triangle draw command in command buffer,\n"
 		"      attributeless, constant VS output:       ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			for(uint32_t i=0; i<numTriangles; i++)
@@ -933,10 +897,9 @@ static void initTests()
 		"      per-triangle draw command in command buffer,\n"
 		"      vec4 coordinate attribute:               ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get() },
 			          vector<vk::DescriptorSet>());
 			for(uint32_t i=0; i<numTriangles; i++)
@@ -949,10 +912,10 @@ static void initTests()
 		"      one indirect draw call, per-triangle record,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessConstantOutputPipeline.get(),
+			          simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			if(enabledFeatures.multiDrawIndirect)
@@ -970,10 +933,9 @@ static void initTests()
 		"      one indirect draw call, per-triangle record,\n"
 		"      vec4 coordiate attribute):               ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get() },
 			          vector<vk::DescriptorSet>());
 			if(enabledFeatures.multiDrawIndirect)
@@ -990,10 +952,9 @@ static void initTests()
 		"   One attribute performance, coordinates in vec4 attribute,\n"
 		"      one draw call:                           ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get() },
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1004,10 +965,9 @@ static void initTests()
 		"   One buffer performance, coordinates in vec4 buffer,\n"
 		"      one draw call:                           ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          coordinate4BufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, coordinate4BufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ coordinate4BufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1018,10 +978,9 @@ static void initTests()
 		"   One buffer performance, coordinates in vec3 buffer,\n"
 		"      one draw call:                           ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          coordinate3BufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, coordinate3BufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ coordinate3BufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1032,10 +991,9 @@ static void initTests()
 		"   Two attributes performance, 2x vec4 attribute,\n"
 		"      both attributes used:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), vec4Attributes[0].get() },
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1046,10 +1004,9 @@ static void initTests()
 		"   Two buffers performance, 2x vec4 buffer,\n"
 		"      both attributes used:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoBuffersPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoBuffersPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ twoBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1060,10 +1017,9 @@ static void initTests()
 		"   Two buffers performance, 2x vec3 buffer,\n"
 		"      both attributes used:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoBuffer3Pipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoBuffer3Pipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ twoBuffer3DescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1075,10 +1031,9 @@ static void initTests()
 		"      2x vec4 attribute fetched from the single buffer,\n"
 		"      both attributes used:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoInterleavedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoInterleavedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ twoInterleavedAttributes.get() },
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1090,10 +1045,9 @@ static void initTests()
 		"      2x vec4 buffers fetched from the single buffer,\n"
 		"      both buffers used:                       ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoInterleavedBuffersPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoInterleavedBuffersPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ twoInterleavedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1105,10 +1059,9 @@ static void initTests()
 		"      1x buffer using 32-byte struct unpacked\n"
 		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          singlePackedBufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, singlePackedBufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ singlePackedBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1120,10 +1073,9 @@ static void initTests()
 		"      2x uvec4 attribute unpacked into\n"
 		"      position+normal+color+texCoord:          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1135,10 +1087,9 @@ static void initTests()
 		"      2x uvec4 buffers unpacked into\n"
 		"      position+normal+color+texCoord:          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedBuffersPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedBuffersPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ twoPackedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1150,10 +1101,9 @@ static void initTests()
 		"      2x buffer using 16-byte struct unpacked into\n"
 		"      position+normal+color+texCoord:          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedBuffersUsingStructPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedBuffersUsingStructPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ twoPackedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1165,10 +1115,9 @@ static void initTests()
 		"      accessed multiple times, unpacked into\n"
 		"      position+normal+color+texCoord:          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedBuffersUsingStructSlowPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedBuffersUsingStructSlowPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ twoPackedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1179,10 +1128,9 @@ static void initTests()
 		"   Four attributes performance,\n"
 		"      4x vec4f32 attributes:                   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fourAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fourAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), vec4Attributes[0].get(),
 			                              vec4Attributes[1].get(), vec4Attributes[2].get() },
 			          vector<vk::DescriptorSet>());
@@ -1194,10 +1142,9 @@ static void initTests()
 		"   Four buffers performance, 4x vec4f32 buffers,\n"
 		"      all buffers used:                        ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fourBuffersPipeline.get(), fourBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fourBuffersPipeline.get(), fourBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ fourBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1208,10 +1155,9 @@ static void initTests()
 		"   Four buffers performance, 4x vec3 buffers,\n"
 		"      all buffers used:                        ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fourBuffer3Pipeline.get(), fourBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fourBuffer3Pipeline.get(), fourBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ fourBuffer3DescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1222,10 +1168,9 @@ static void initTests()
 		"   Four interleaved attributes performance, 4x vec4f32\n"
 		"      fetched from the single buffer:          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fourInterleavedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fourInterleavedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ fourInterleavedAttributes.get() },
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1237,10 +1182,9 @@ static void initTests()
 		"      4x vec4f32 fetched from the single buffer,\n"
 		"      all attributes used:                     ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fourInterleavedBuffersPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fourInterleavedBuffersPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ fourInterleavedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1252,10 +1196,9 @@ static void initTests()
 		"      (2x vec4f32 + 2x vec4u8, 2x conversion from vec4u8\n"
 		"      in memory to vec4 in VS):                ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          two4F32Two4U8AttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, two4F32Two4U8AttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), vec4Attributes[0].get(),
 			                              vec4u8Attributes[0].get(), vec4u8Attributes[1].get() },
 			          vector<vk::DescriptorSet>());
@@ -1267,10 +1210,9 @@ static void initTests()
 		"   Matrix performance, one uniform Matrix for all triangles read\n"
 		"      by VS, coordinates in vec4 attribute:    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          singleMatrixUniformPipeline.get(), oneUniformVSPipelineLayout.get(), timestampIndex,
+			beginTest(cb, singleMatrixUniformPipeline.get(), oneUniformVSPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get() },
 			          vector<vk::DescriptorSet>{ oneUniformVSDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1281,10 +1223,9 @@ static void initTests()
 		"   Matrix performance, per-triangle Matrix in matrix buffer read\n"
 		"      by VS, coordinates in vec4 attribute:    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          matrixBufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, matrixBufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get() },
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1296,10 +1237,9 @@ static void initTests()
 		"      coordinates in vec4 attribute, each triangle is instanced\n"
 		"      so it receives different matrix:         ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          matrixAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, matrixAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), transformationMatrixAttribute.get() },
 			          vector<vk::DescriptorSet>());
 			cb.draw(3, numTriangles/2, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1311,10 +1251,10 @@ static void initTests()
 		"   Matrix performance, single non-changing Matrix in a buffer,\n"
 		"      two packed attributes:                   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedAttributesAndSingleMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedAttributesAndSingleMatrixPipeline.get(),
+			          oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1325,10 +1265,9 @@ static void initTests()
 		"   Matrix performance, per-triangle Matrix in matrix buffer,\n"
 		"      two packed attributes:                   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedAttributesAndMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedAttributesAndMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1339,10 +1278,9 @@ static void initTests()
 		"   Matrix performance, per-triangle Matrix in matrix buffer,\n"
 		"      two packed buffers:                      ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          twoPackedBuffersAndMatrixPipeline.get(), threeBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, twoPackedBuffersAndMatrixPipeline.get(), threeBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ threeBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1354,11 +1292,10 @@ static void initTests()
 		"      from matrix buffer, two packed buffers read by GS:\n"
 		"                                               ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          geometryShaderPipeline.get(), threeBuffersInGSPipelineLayout.get(), timestampIndex,
+				beginTest(cb, geometryShaderPipeline.get(), threeBuffersInGSPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>(),
 				          vector<vk::DescriptorSet>{ threeBuffersInGSDescriptorSet });
 				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1383,10 +1320,9 @@ static void initTests()
 		"   Matrix performance, per-triangle matrix in matrix buffer,\n"
 		"      4x vec4f32 attributes:                   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fourAttributesAndMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fourAttributesAndMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), vec4Attributes[0].get(),
 			                              vec4Attributes[1].get(), vec4Attributes[2].get() },
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
@@ -1400,10 +1336,10 @@ static void initTests()
 		"      two packed attributes unpacked into positions+normals+\n"
 		"      color+texCoord:                          ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          transformationThreeMatricesPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, transformationThreeMatricesPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1415,10 +1351,10 @@ static void initTests()
 		"      2x per-triangle matrix read from matrix buffer (mat4+mat3)\n"
 		"      in VS, two packed attributes:            ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          transformationFiveMatricesPipeline.get(), twoBuffersAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, transformationFiveMatricesPipeline.get(),
+			          twoBuffersAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationFiveMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1431,7 +1367,7 @@ static void initTests()
 		"      2x per-triangle Matrix read from matrix buffer (mat4+mat3)\n"
 		"      in VS, two packed attributes:            ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.pushConstants(
 				twoBuffersAndPushConstantsPipelineLayout.get(),  // layout
@@ -1449,8 +1385,7 @@ static void initTests()
 					0.f,0.f,0.f,1.f,
 				}.data()
 			);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          transformationFiveMatricesPushConstantsPipeline.get(),
+			beginTest(cb, transformationFiveMatricesPushConstantsPipeline.get(),
 			          twoBuffersAndPushConstantsPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesDescriptorSet });
@@ -1464,10 +1399,9 @@ static void initTests()
 		"      (mat3) + 2x per-triangle Matrix read from matrix buffer (mat4+\n"
 		"      mat3) in VS, two packed attributes:      ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          transformationFiveMatricesSpecializationConstantsPipeline.get(),
+			beginTest(cb, transformationFiveMatricesSpecializationConstantsPipeline.get(),
 			          twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesDescriptorSet });
@@ -1481,10 +1415,10 @@ static void initTests()
 		"      2x per-triangle Matrix read from matrix buffer (mat4+mat3),\n"
 		"      two packed attributes:                   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          transformationFiveMatricesConstantsPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
+			beginTest(cb, transformationFiveMatricesConstantsPipeline.get(),
+			          twoBuffersPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1497,11 +1431,10 @@ static void initTests()
 		"      Matrix read from matrix buffer (mat4+mat3) in GS,\n"
 		"      2x packed attribute passed through VS:   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          transformationFiveMatricesUsingGSAndAttributesPipeline.get(),
+				beginTest(cb, transformationFiveMatricesUsingGSAndAttributesPipeline.get(),
 				          twoBuffersAndUniformInGSPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationFiveMatricesUsingGSAndAttributesDescriptorSet });
@@ -1528,11 +1461,10 @@ static void initTests()
 		"      Matrix read from matrix buffer (mat4+mat3) in GS,\n"
 		"      2x packed data read from buffer in GS:   ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          transformationFiveMatricesUsingGSPipeline.get(),
+				beginTest(cb, transformationFiveMatricesUsingGSPipeline.get(),
 				          fourBuffersAndUniformInGSPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>(),
 				          vector<vk::DescriptorSet>{ transformationFiveMatricesUsingGSDescriptorSet });
@@ -1559,10 +1491,9 @@ static void initTests()
 		"      four attributes (vec4f32+vec3f32+vec4u8+vec2f32),\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedFourAttributesFiveMatricesPipeline.get(),
+			beginTest(cb, phongTexturedFourAttributesFiveMatricesPipeline.get(),
 			          twoBuffersAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), normalAttribute.get(),
 			                              colorAttribute.get(), texCoordAttribute.get() },
@@ -1577,11 +1508,10 @@ static void initTests()
 		"      four attributes (vec4f32+vec3f32+vec4u8+vec2f32),\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedFourAttributesPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedFourAttributesPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ coordinate4Attribute.get(), normalAttribute.get(),
 			                              colorAttribute.get(), texCoordAttribute.get() },
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesDescriptorSet });
@@ -1595,10 +1525,9 @@ static void initTests()
 		"      buffer (mat4)), 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1611,10 +1540,9 @@ static void initTests()
 		"      matrix from matrix buffer (mat4)), 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedRowMajorPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedRowMajorPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesRowMajorDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1627,10 +1555,9 @@ static void initTests()
 		"      buffer), 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedMat4x3Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedMat4x3Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationThreeMatrices4x3DescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1643,10 +1570,10 @@ static void initTests()
 		"      row-major mat4x3 from matrix buffer), 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedMat4x3RowMajorPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedMat4x3RowMajorPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationThreeMatrices4x3RowMajorDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1660,10 +1587,9 @@ static void initTests()
 		"      buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedQuat1Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedQuat1Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1677,10 +1603,9 @@ static void initTests()
 		"      buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1694,10 +1619,9 @@ static void initTests()
 		"      buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedQuat3Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedQuat3Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1711,10 +1635,9 @@ static void initTests()
 		"      the same index in buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1728,11 +1651,10 @@ static void initTests()
 		"      2x vec4f32 read from buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -1747,11 +1669,11 @@ static void initTests()
 		"      2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -1765,11 +1687,10 @@ static void initTests()
 		"      2x vec4f32 read from buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(primitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedQuat2PrimitiveRestartPipeline.get(),
+			beginTest(cb, phongTexturedQuat2PrimitiveRestartPipeline.get(),
 			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
@@ -1785,11 +1706,10 @@ static void initTests()
 		"      in buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(primitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+			beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
 			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
@@ -1804,11 +1724,10 @@ static void initTests()
 		"      2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedDMatricesOnlyInputPipeline.get(),
+				beginTest(cb, phongTexturedDMatricesOnlyInputPipeline.get(),
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationThreeDMatricesDescriptorSet });
@@ -1836,11 +1755,11 @@ static void initTests()
 		"      positions in single precision, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedDMatricesPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
+				beginTest(cb, phongTexturedDMatricesPipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ packedAttribute1.get(), packedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationThreeDMatricesDescriptorSet });
 				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -1867,11 +1786,10 @@ static void initTests()
 		"      matrix buffer (dmat4)), 3x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedDMatricesDVerticesPipeline.get(),
+				beginTest(cb, phongTexturedDMatricesDVerticesPipeline.get(),
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ packedDAttribute1.get(), packedDAttribute2.get(), packedDAttribute3.get() },
 				          vector<vk::DescriptorSet>{ transformationThreeDMatricesDescriptorSet });
@@ -1899,11 +1817,10 @@ static void initTests()
 		"      dmatrix from matrix buffer (dmat4)), 3x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64 && enabledFeatures.geometryShader) {
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedInGSDMatricesDVerticesPipeline.get(),
+				beginTest(cb, phongTexturedInGSDMatricesDVerticesPipeline.get(),
 				          bufferAndUniformInGSPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ packedDAttribute1.get(), packedDAttribute2.get(), packedDAttribute3.get() },
 				          vector<vk::DescriptorSet>{ phongTexturedThreeDMatricesUsingGSAndAttributesDescriptorSet });
@@ -1945,11 +1862,10 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t n)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 			{
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(),
-				          timestampIndex,
+				beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ sharedVertexPackedAttribute1.get(), sharedVertexPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 				for(uint32_t i=0,e=3*numTriangles; i<e; i+=n*3)
@@ -1980,12 +1896,11 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t n)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 			{
 				cb.bindIndexBuffer(stripIndexBuffer.get(), 0, vk::IndexType::eUint32);
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(),
-				          timestampIndex,
+				beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 				for(uint32_t i=0,e=3*numTriangles; i<e; i+=n*3)
@@ -2014,11 +1929,10 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t n)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 			{
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedSingleQuat2TriStripPipeline.get(), bufferAndUniformPipelineLayout.get(),
-				          timestampIndex,
+				beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 				for(uint32_t i=0,e=(numTriangles/triStripLength)*(2+triStripLength); i<e; i+=2+triStripLength)
@@ -2049,12 +1963,11 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t n)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 			{
 				cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedSingleQuat2TriStripPipeline.get(), bufferAndUniformPipelineLayout.get(),
-				          timestampIndex,
+				beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 				for(uint32_t i=0,e=(numTriangles/triStripLength)*(2+triStripLength); i<e; i+=2+triStripLength)
@@ -2092,7 +2005,7 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t triPerStrip)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 			{
 				switch(triPerStrip) {
 				case 0: cb.bindIndexBuffer(stripPrimitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32); break;
@@ -2101,9 +2014,8 @@ static void initTests()
 				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				};
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-				          timestampIndex,
+				beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 				if(triPerStrip==0)
@@ -2138,7 +2050,7 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t triPerStrip)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 			{
 				switch(triPerStrip) {
 				case 1000: cb.bindIndexBuffer(stripPrimitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32); break;
@@ -2147,9 +2059,8 @@ static void initTests()
 				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				};
-				beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-				          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-				          timestampIndex,
+				beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 				uint32_t numIndicesPerStrip = (triPerStrip+3) * (triStripLength/triPerStrip);
@@ -2169,12 +2080,11 @@ static void initTests()
 		"      the same index in buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(primitiveRestartMinusOne2IndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(5*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2191,12 +2101,11 @@ static void initTests()
 		"      the same index in buffer in VS, 2x packed attribute,\n"
 		"      simplified FS that just uses all inputs: ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(primitiveRestartMinusOne5IndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(8*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2213,12 +2122,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      performance of indices (-1) per second:  ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(minusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2235,12 +2143,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      degenerated triangles performance:       ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(numTriangles+2, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2257,12 +2164,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      degenerated triangles performance:       ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(plusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2PrimitiveRestartPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(numTriangles+2, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2279,12 +2185,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      degenerated triangles per second:        ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2TriStripPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(numTriangles+2, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2301,12 +2206,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      degenerated triangles per second:        ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(plusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2TriStripPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(numTriangles+2, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2323,12 +2227,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      triangles per second:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2345,12 +2248,11 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      triangles per second:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(plusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
@@ -2367,11 +2269,10 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      triangles per second:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2TriStripPipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ sameVertexPackedAttribute1.get(), sameVertexPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			for(uint32_t i=0,e=(numTriangles/triStripLength)*(2+triStripLength); i<e; i+=2+triStripLength)
@@ -2389,11 +2290,10 @@ static void initTests()
 		"      2x packed attribute, simplified FS that just uses all inputs,\n"
 		"      triangles per second:                    ",
 		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(),
-			          timestampIndex,
+			beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
+			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ sameVertexPackedAttribute1.get(), sameVertexPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2405,11 +2305,10 @@ static void initTests()
 	tests.emplace_back(
 		"   Single fullscreen quad, constant color FS:  ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = 1.;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateContantColorPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateContantColorPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(4, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2420,11 +2319,10 @@ static void initTests()
 	tests.emplace_back(
 		"   10x fullscreen quad, constant color FS:     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateContantColorPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateContantColorPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2436,11 +2334,10 @@ static void initTests()
 		"   Four smooth interpolators (4x vec4),\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateFourSmoothInterpolatorsPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateFourSmoothInterpolatorsPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2452,11 +2349,10 @@ static void initTests()
 		"   Four flat interpolators (4x vec4),\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateFourFlatInterpolatorsPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateFourFlatInterpolatorsPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2468,11 +2364,11 @@ static void initTests()
 		"   Four textured phong interpolators (vec3+vec3+vec4+vec2),\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateTexturedPhongInterpolatorsPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateTexturedPhongInterpolatorsPipeline.get(),
+			          simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2486,11 +2382,10 @@ static void initTests()
 		"      globalAmbientLight (12 byte) + light (64 byte) + sampler2D),\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateTexturedPhongPipeline.get(), phongTexturedPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateTexturedPhongPipeline.get(), phongTexturedPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ phongTexturedDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2504,11 +2399,11 @@ static void initTests()
 		"      globalAmbientLight (12 byte) + light (80 byte) + sampler2D),\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateTexturedPhongNotPackedPipeline.get(), phongTexturedPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateTexturedPhongNotPackedPipeline.get(),
+			          phongTexturedPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ phongTexturedNotPackedDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2520,11 +2415,10 @@ static void initTests()
 		"   Constant color from uniform, 1x uniform (vec4) in FS,\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateUniformColor4fPipeline.get(), oneUniformFSPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateUniformColor4fPipeline.get(), oneUniformFSPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ one4fUniformFSDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2536,11 +2430,10 @@ static void initTests()
 		"   Constant color from uniform, 1x uniform (uint) in FS,\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          fillrateUniformColor4bPipeline.get(), oneUniformFSPipelineLayout.get(), timestampIndex,
+			beginTest(cb, fillrateUniformColor4bPipeline.get(), oneUniformFSPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ one4bUniformFSDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2554,11 +2447,10 @@ static void initTests()
 		"      light (48 bytes: position+attenuation+ambient+diffuse)),\n"
 		"      10x fullscreen quad:                     ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongNoSpecularPipeline.get(), threeUniformFSPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongNoSpecularPipeline.get(), threeUniformFSPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ threeUniformFSDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2571,11 +2463,11 @@ static void initTests()
 		"      1x uniform (material+globalAmbientLight+light (vec4+vec4+vec4 +\n"
 		"      3x vec4), 10x fullscreen quad:           ",
 		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, size_t acquiredImageIndex, uint32_t timestampIndex, uint32_t)
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, framebuffers[acquiredImageIndex].get(), currentSurfaceExtent,
-			          phongNoSpecularSingleUniformPipeline.get(), oneUniformFSPipelineLayout.get(), timestampIndex,
+			beginTest(cb, phongNoSpecularSingleUniformPipeline.get(),
+			          oneUniformFSPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ allInOneLightingUniformDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
@@ -2606,7 +2498,7 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::TransferThroughput,
-			[](vk::CommandBuffer cb, size_t /*acquiredImageIndex*/, uint32_t timestampIndex, uint32_t transferSize)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t transferSize)
 			{
 				// compute numTranfers
 				// (numTransfers is limited to 1/8 of the buffer size because of some strange driver problem
@@ -2671,7 +2563,7 @@ static void initTests()
 				return s;
 			}(n).c_str(),
 			Test::Type::TransferThroughput,
-			[](vk::CommandBuffer cb, size_t /*acquiredImageIndex*/, uint32_t timestampIndex, uint32_t transferSize)
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t transferSize)
 			{
 				// compute numTranfers
 				// (numTransfers is limited to 1/8 of the buffer size because of some strange driver problem
@@ -3190,113 +3082,16 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 			vk::InstanceCreateInfo{
 				vk::InstanceCreateFlags(),  // flags
 				&(const vk::ApplicationInfo&)vk::ApplicationInfo{
-					"CADR Vk VulkanRenderingPerformance",  // application name
+					"ivperf",  // application name
 					VK_MAKE_VERSION(0,0,0),  // application version
-					"CADR",                  // engine name
+					nullptr,                 // engine name
 					VK_MAKE_VERSION(0,0,0),  // engine version
 					VK_API_VERSION_1_0,      // api version
 				},
 				0,nullptr,  // no layers
-				uint32_t(physicalDeviceProperties2Supported ? 3 : 2),  // enabled extension count
-#ifdef _WIN32
-				array<const char*, 3>{ "VK_KHR_surface", "VK_KHR_win32_surface", "VK_KHR_get_physical_device_properties2" }.data(),  // enabled extension names
-#else
-				array<const char*, 3>{ "VK_KHR_surface", "VK_KHR_xlib_surface", "VK_KHR_get_physical_device_properties2" }.data(),  // enabled extension names
-#endif
+				1,  // enabled extension count
+				array<const char*, 1>{ "VK_KHR_get_physical_device_properties2" }.data(),  // enabled extension names
 			});
-
-
-#ifdef _WIN32
-
-	// initial window size
-	RECT screenSize;
-	if(GetWindowRect(GetDesktopWindow(),&screenSize)==0)
-		throw runtime_error("GetWindowRect() failed.");
-	windowSize.setWidth(screenSize.right-screenSize.left);
-	windowSize.setHeight(screenSize.bottom-screenSize.top);
-
-	// window's message handling procedure
-	auto wndProc=[](HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)->LRESULT {
-		switch(msg)
-		{
-			case WM_SIZE:
-				needResize=true;
-				windowSize.setWidth(LOWORD(lParam));
-				windowSize.setHeight(HIWORD(lParam));
-				return DefWindowProc(hwnd,msg,wParam,lParam);
-			case WM_CLOSE:
-				DestroyWindow(hwnd);
-				UnregisterClass("RenderingWindow",GetModuleHandle(NULL));
-				window=nullptr;
-				return 0;
-			case WM_DESTROY:
-				PostQuitMessage(0);
-				return 0;
-			default:
-				return DefWindowProc(hwnd,msg,wParam,lParam);
-		}
-	};
-
-	// register window class
-	WNDCLASSEX wc;
-	wc.cbSize        = sizeof(WNDCLASSEX);
-	wc.style         = 0;
-	wc.lpfnWndProc   = wndProc;
-	wc.cbClsExtra    = 0;
-	wc.cbWndExtra    = 0;
-	wc.hInstance     = GetModuleHandle(NULL);
-	wc.hIcon         = LoadIcon(NULL,IDI_APPLICATION);
-	wc.hCursor       = LoadCursor(NULL,IDC_ARROW);
-	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-	wc.lpszMenuName  = NULL;
-	wc.lpszClassName = "RenderingWindow";
-	wc.hIconSm       = LoadIcon(NULL,IDI_APPLICATION);
-	if(!RegisterClassEx(&wc))
-		throw runtime_error("Can not register window class.");
-
-	// create window
-	window=CreateWindowEx(
-		WS_EX_CLIENTEDGE,
-		"RenderingWindow",
-		"Rendering performance",
-		WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT,CW_USEDEFAULT,windowSize.width,windowSize.height,
-		NULL,NULL,wc.hInstance,NULL);
-	if(window==NULL) {
-		UnregisterClass("RenderingWindow",GetModuleHandle(NULL));
-		throw runtime_error("Can not create window.");
-	}
-
-	// show window
-	ShowWindow(window,SW_SHOWDEFAULT);
-
-	// create surface
-	surface=instance->createWin32SurfaceKHRUnique(vk::Win32SurfaceCreateInfoKHR(vk::Win32SurfaceCreateFlagsKHR(),wc.hInstance,window));
-
-#else
-
-	// open X connection
-	display=XOpenDisplay(nullptr);
-	if(display==nullptr)
-		throw runtime_error("Can not open display. No X-server running or wrong DISPLAY variable.");
-
-	// create window
-	int blackColor=BlackPixel(display,DefaultScreen(display));
-	Screen* screen=XDefaultScreenOfDisplay(display);
-	windowSize.setWidth(XWidthOfScreen(screen));
-	windowSize.setHeight(XHeightOfScreen(screen));
-	window=XCreateSimpleWindow(display,DefaultRootWindow(display),0,0,windowSize.width,
-	                           windowSize.height,0,blackColor,blackColor);
-	XSetStandardProperties(display,window,"Rendering performance",NULL,None,NULL,0,NULL);
-	XSelectInput(display,window,StructureNotifyMask);
-	wmDeleteMessage=XInternAtom(display,"WM_DELETE_WINDOW",False);
-	XSetWMProtocols(display,window,&wmDeleteMessage,1);
-	XMapWindow(display,window);
-
-	// create surface
-	surface=instance->createXlibSurfaceKHRUnique(vk::XlibSurfaceCreateInfoKHR(vk::XlibSurfaceCreateFlagsKHR(),display,window));
-
-#endif
 
 	// print physical devices
 	cout << "Devices in the system:" << endl;
@@ -3312,43 +3107,23 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	}
 
 	// find compatible devices
-	// (On Windows, all graphics adapters capable of monitor output are usually compatible devices.
-	// On Linux X11 platform, only one graphics adapter is compatible device (the one that
-	// renders the window).
-	vector<tuple<vk::PhysicalDevice, uint32_t, uint32_t, uint32_t, vk::PhysicalDeviceProperties,
+	vector<tuple<vk::PhysicalDevice, uint32_t, uint32_t, vk::PhysicalDeviceProperties,
 		vector<vk::ExtensionProperties>>> compatibleDevices;
 	for(size_t di=0, c=deviceList.size(); di<c; di++)
 	{
 		vk::PhysicalDevice pd = deviceList[di];
 
-		// skip devices without VK_KHR_swapchain
-		vector<vk::ExtensionProperties> extensionList = pd.enumerateDeviceExtensionProperties();
-		for(const vk::ExtensionProperties& e : extensionList)
-			if(strcmp(e.extensionName, "VK_KHR_swapchain") == 0)
-				goto swapchainSupported;
-		continue;
-		swapchainSupported:
-
 		// select queues
 		uint32_t graphicsQueueFamily = UINT32_MAX;
-		uint32_t presentationQueueFamily = UINT32_MAX;
 		uint32_t sparseQueueFamily = UINT32_MAX;
 		vector<vk::QueueFamilyProperties> queueFamilyList = pd.getQueueFamilyProperties();
+		extensionList = pd.enumerateDeviceExtensionProperties();
 		uint32_t i = 0;
 		for(auto it=queueFamilyList.begin(); it!=queueFamilyList.end(); it++,i++) {
-			bool p = pd.getSurfaceSupportKHR(i, surface.get()) != 0;
 			if(it->queueFlags & vk::QueueFlagBits::eGraphics) {
-				if(p) {
-					if(it->queueFlags & vk::QueueFlagBits::eSparseBinding) {
-						compatibleDevices.emplace_back(pd, i, i, i, devicePropertiesList[di], move(extensionList));
-						goto nextDevice;
-					}
-					else {
-						if(graphicsQueueFamily == UINT32_MAX)
-							graphicsQueueFamily = i;
-						if(presentationQueueFamily == UINT32_MAX)
-							presentationQueueFamily = i;
-					}
+				if(it->queueFlags & vk::QueueFlagBits::eSparseBinding) {
+					compatibleDevices.emplace_back(pd, i, i, devicePropertiesList[di], move(extensionList));
+					goto nextDevice;
 				}
 				else {
 					if(graphicsQueueFamily == UINT32_MAX)
@@ -3356,21 +3131,18 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 				}
 			}
 			else {
-				if(p)
-					if(presentationQueueFamily == UINT32_MAX)
-						presentationQueueFamily = i;
+				if(sparseQueueFamily == UINT32_MAX && it->queueFlags & vk::QueueFlagBits::eSparseBinding)
+					sparseQueueFamily = i;
 			}
-			if(sparseQueueFamily == UINT32_MAX && it->queueFlags & vk::QueueFlagBits::eSparseBinding)
-				sparseQueueFamily = i;
 		}
 		if(sparseMode == SPARSE_NONE) {
-			if(graphicsQueueFamily != UINT32_MAX && presentationQueueFamily != UINT32_MAX)
-				compatibleDevices.emplace_back(pd, graphicsQueueFamily, presentationQueueFamily, sparseQueueFamily,
+			if(graphicsQueueFamily != UINT32_MAX)
+				compatibleDevices.emplace_back(pd, graphicsQueueFamily, sparseQueueFamily,
 				                               devicePropertiesList[di], move(extensionList));
 		}
 		else
-			if(graphicsQueueFamily != UINT32_MAX && presentationQueueFamily != UINT32_MAX && sparseQueueFamily != UINT32_MAX)
-				compatibleDevices.emplace_back(pd, graphicsQueueFamily, presentationQueueFamily, sparseQueueFamily,
+			if(graphicsQueueFamily != UINT32_MAX && sparseQueueFamily != UINT32_MAX)
+				compatibleDevices.emplace_back(pd, graphicsQueueFamily, sparseQueueFamily,
 				                               devicePropertiesList[di], move(extensionList));
 		nextDevice:;
 	}
@@ -3382,13 +3154,13 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	{
 		decltype(compatibleDevices) filteredDevices;
 		for(auto& d : compatibleDevices)
-			if(string_view(std::get<4>(d).deviceName).find(nameFilter) != string::npos)
+			if(string_view(std::get<3>(d).deviceName).find(nameFilter) != string::npos)
 				filteredDevices.push_back(d);
 
 		compatibleDevices.swap(filteredDevices);
 	}
 	if(compatibleDevices.empty())
-		throw runtime_error("No device matching the name filter \"" + nameFilter + "\".");
+		throw runtime_error("No device name matching the filter \"" + nameFilter + "\".");
 
 	if(deviceIndex >= 0)
 	{
@@ -3397,10 +3169,9 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 			auto& d = compatibleDevices[deviceIndex];
 			physicalDevice = std::get<0>(d);
 			graphicsQueueFamily = std::get<1>(d);
-			presentationQueueFamily = std::get<2>(d);
-			sparseQueueFamily = std::get<3>(d);
-			physicalDeviceProperties = std::get<4>(d);
-			physicalDeviceExtensions = std::move(get<5>(d));
+			sparseQueueFamily = std::get<2>(d);
+			physicalDeviceProperties = std::get<3>(d);
+			physicalDeviceExtensions = std::move(get<4>(d));
 		}
 		else
 			throw runtime_error("Invalid device index. "
@@ -3421,12 +3192,11 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 			20, // vk::PhysicalDeviceType::eCpu           - low score
 			10, // unknown vk::PhysicalDeviceType
 		};
-		int bestScore = deviceTypeScore[clamp(int(std::get<4>(*bestDevice).deviceType), 0, int(deviceTypeScore.size())-1)];
-		uint32_t queueFamily = std::get<1>(*bestDevice);
-		if(std::get<2>(*bestDevice) == queueFamily && std::get<3>(*bestDevice) == queueFamily)
+		int bestScore = deviceTypeScore[clamp(int(std::get<3>(*bestDevice).deviceType), 0, int(deviceTypeScore.size())-1)];
+		if(std::get<1>(*bestDevice) == std::get<2>(*bestDevice))
 			bestScore++;
 		for(auto it=compatibleDevices.begin()+1; it!=compatibleDevices.end(); it++) {
-			int score = deviceTypeScore[clamp(int(std::get<4>(*it).deviceType), 0, int(deviceTypeScore.size())-1)];
+			int score = deviceTypeScore[clamp(int(std::get<3>(*it).deviceType), 0, int(deviceTypeScore.size())-1)];
 			if(std::get<1>(*it) == std::get<2>(*it))
 				score++;
 			if(score > bestScore) {
@@ -3437,10 +3207,9 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 
 		physicalDevice = std::get<0>(*bestDevice);
 		graphicsQueueFamily = std::get<1>(*bestDevice);
-		presentationQueueFamily = std::get<2>(*bestDevice);
-		sparseQueueFamily = std::get<3>(*bestDevice);
-		physicalDeviceProperties = std::get<4>(*bestDevice);
-		physicalDeviceExtensions = move(std::get<5>(*bestDevice));
+		sparseQueueFamily = std::get<2>(*bestDevice);
+		physicalDeviceProperties = std::get<3>(*bestDevice);
+		physicalDeviceExtensions = move(std::get<4>(*bestDevice));
 	}
 	cout << "\nSelected device:\n"
 	        "   " << physicalDeviceProperties.deviceName << "\n" << endl;
@@ -3567,20 +3336,11 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 		physicalDevice.createDeviceUnique(
 			vk::DeviceCreateInfo{
 				vk::DeviceCreateFlags(),  // flags
-				(sparseMode==SPARSE_NONE)  // queueCreateInfoCount
-					?(presentationQueueFamily==graphicsQueueFamily)?uint32_t(1):uint32_t(2)
-					:(presentationQueueFamily==graphicsQueueFamily && sparseQueueFamily==graphicsQueueFamily)
-						?uint32_t(1):uint32_t(3),
-				array<const vk::DeviceQueueCreateInfo,3>{  // pQueueCreateInfos
+				(sparseMode==SPARSE_NONE) ? uint32_t(1) : uint32_t(2), // queueCreateInfoCount
+				array<const vk::DeviceQueueCreateInfo,2>{  // pQueueCreateInfos
 					vk::DeviceQueueCreateInfo{
 						vk::DeviceQueueCreateFlags(),
 						graphicsQueueFamily,
-						1,
-						&(const float&)1.f,
-					},
-					vk::DeviceQueueCreateInfo{
-						vk::DeviceQueueCreateFlags(),
-						presentationQueueFamily,
 						1,
 						&(const float&)1.f,
 					},
@@ -3592,15 +3352,14 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 					},
 				}.data(),
 				0,nullptr,  // no layers
-				1,          // number of enabled extensions
-				array<const char*,1>{"VK_KHR_swapchain"}.data(),  // enabled extension names
+				0,        // number of enabled extensions
+				nullptr,  // enabled extension names
 				&enabledFeatures,  // enabled features
 			}
 		);
 
 	// get queues
 	graphicsQueue=device->getQueue(graphicsQueueFamily,0);
-	presentationQueue=device->getQueue(presentationQueueFamily,0);
 	if(sparseQueueFamily!=UINT32_MAX)
 		sparseQueue=device->getQueue(sparseQueueFamily,0);
 
@@ -3648,15 +3407,6 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	}
 
 	// choose surface format
-	vector<vk::SurfaceFormatKHR> surfaceFormats=physicalDevice.getSurfaceFormatsKHR(surface.get());
-	const vk::SurfaceFormatKHR wantedSurfaceFormat{vk::Format::eB8G8R8A8Unorm,vk::ColorSpaceKHR::eSrgbNonlinear};
-	chosenSurfaceFormat=
-		surfaceFormats.size()==1&&surfaceFormats[0].format==vk::Format::eUndefined
-			?wantedSurfaceFormat
-			:std::find(surfaceFormats.begin(),surfaceFormats.end(),
-			           wantedSurfaceFormat)!=surfaceFormats.end()
-				           ?wantedSurfaceFormat
-				           :surfaceFormats[0];
 	depthFormat=
 		[](){
 			for(vk::Format f:array<vk::Format,3>{vk::Format::eD32Sfloat,vk::Format::eD32SfloatS8Uint,vk::Format::eD24UnormS8Uint}) {
@@ -3676,14 +3426,14 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 				array<const vk::AttachmentDescription,2>{  // pAttachments
 					vk::AttachmentDescription{  // color attachment
 						vk::AttachmentDescriptionFlags(),  // flags
-						chosenSurfaceFormat.format,        // format
+						colorFormat,                       // format
 						vk::SampleCountFlagBits::e1,       // samples
 						vk::AttachmentLoadOp::eClear,      // loadOp
 						vk::AttachmentStoreOp::eStore,     // storeOp
 						vk::AttachmentLoadOp::eDontCare,   // stencilLoadOp
 						vk::AttachmentStoreOp::eDontCare,  // stencilStoreOp
 						vk::ImageLayout::eUndefined,       // initialLayout
-						vk::ImageLayout::ePresentSrcKHR    // finalLayout
+						vk::ImageLayout::eColorAttachmentOptimal  // finalLayout
 					},
 					vk::AttachmentDescription{  // depth attachment
 						vk::AttachmentDescriptionFlags(),  // flags
@@ -4954,33 +4704,28 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 			)
 		)[0]);
 
-	// semaphores
-	imageAvailableSemaphore=
-		device->createSemaphoreUnique(
-			vk::SemaphoreCreateInfo(
-				vk::SemaphoreCreateFlags()  // flags
-			)
-		);
-	renderFinishedSemaphore=
-		device->createSemaphoreUnique(
-			vk::SemaphoreCreateInfo(
-				vk::SemaphoreCreateFlags()  // flags
-			)
-		);
+	// fence
+	fence = device->createFenceUnique(
+		vk::FenceCreateInfo{
+			vk::FenceCreateFlags()
+		}
+	);
 }
 
 
-/// Recreate swapchain and pipeline. The function is usually used on each window resize event and on application start.
-static void recreateSwapchainAndPipeline()
+/// Resize framebuffer and all dependent objects. The function is usually used on each framebuffer resize and on application start.
+static void resizeFramebuffer(vk::Extent2D newExtent)
 {
-	// print new size
-	cout<<"New window size: "<<currentSurfaceExtent.width<<"x"<<currentSurfaceExtent.height<<endl;
+	framebufferExtent=newExtent;
 
 	// stop device and clear resources
 	device->waitIdle();
-	framebuffers.clear();
+	framebuffer.reset();
+	colorImage.reset();
 	depthImage.reset();
+	colorImageMemory.reset();
 	depthImageMemory.reset();
+	colorImageView.reset();
 	depthImageView.reset();
 	attributelessConstantOutputPipeline.reset();
 	attributelessInputIndicesPipeline.reset();
@@ -5048,7 +4793,6 @@ static void recreateSwapchainAndPipeline()
 	fillrateUniformColor4bPipeline.reset();
 	phongNoSpecularPipeline.reset();
 	phongNoSpecularSingleUniformPipeline.reset();
-	swapchainImageViews.clear();
 	coordinate4Attribute.reset();
 	coordinate4AttributeMemory.reset();
 	coordinate4Buffer.reset();
@@ -5198,67 +4942,32 @@ static void recreateSwapchainAndPipeline()
 		)
 	);
 
-	// create swapchain
-	vk::SurfaceCapabilitiesKHR surfaceCapabilities=physicalDevice.getSurfaceCapabilitiesKHR(surface.get());
-	swapchain=
-		device->createSwapchainKHRUnique(
-			vk::SwapchainCreateInfoKHR(
-				vk::SwapchainCreateFlagsKHR(),   // flags
-				surface.get(),                   // surface
-				surfaceCapabilities.maxImageCount==0  // minImageCount
-					?surfaceCapabilities.minImageCount+1
-					:min(surfaceCapabilities.maxImageCount,surfaceCapabilities.minImageCount+1),
-				chosenSurfaceFormat.format,      // imageFormat
-				chosenSurfaceFormat.colorSpace,  // imageColorSpace
-				currentSurfaceExtent,  // imageExtent
-				1,  // imageArrayLayers
-				vk::ImageUsageFlagBits::eColorAttachment,  // imageUsage
-				(graphicsQueueFamily==presentationQueueFamily)?vk::SharingMode::eExclusive:vk::SharingMode::eConcurrent, // imageSharingMode
-				(graphicsQueueFamily==presentationQueueFamily)?uint32_t(0):uint32_t(2),  // queueFamilyIndexCount
-				(graphicsQueueFamily==presentationQueueFamily)?nullptr:array<uint32_t,2>{graphicsQueueFamily,presentationQueueFamily}.data(),  // pQueueFamilyIndices
-				surfaceCapabilities.currentTransform,    // preTransform
-				vk::CompositeAlphaFlagBitsKHR::eOpaque,  // compositeAlpha
-				[](vector<vk::PresentModeKHR>&& modes){  // presentMode
-						return find(modes.begin(),modes.end(),vk::PresentModeKHR::eMailbox)!=modes.end()
-							?vk::PresentModeKHR::eMailbox
-							:vk::PresentModeKHR::eFifo; // fifo is guaranteed to be supported
-					}(physicalDevice.getSurfacePresentModesKHR(surface.get())),
-				VK_TRUE,         // clipped
-				swapchain.get()  // oldSwapchain
+	// images
+	colorImage =
+		device->createImageUnique(
+			vk::ImageCreateInfo(
+				vk::ImageCreateFlags(),       // flags
+				vk::ImageType::e2D,           // imageType
+				colorFormat,                  // format
+				vk::Extent3D(framebufferExtent, 1),  // extent
+				1,                            // mipLevels
+				1,                            // arrayLayers
+				vk::SampleCountFlagBits::e1,  // samples
+				vk::ImageTiling::eOptimal,    // tiling
+				vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc,  // usage
+				vk::SharingMode::eExclusive,  // sharingMode
+				0,                            // queueFamilyIndexCount
+				nullptr,                      // pQueueFamilyIndices
+				vk::ImageLayout::eUndefined   // initialLayout
 			)
 		);
-
-	// swapchain images and image views
-	vector<vk::Image> swapchainImages=device->getSwapchainImagesKHR(swapchain.get());
-	swapchainImageViews.reserve(swapchainImages.size());
-	for(vk::Image image:swapchainImages)
-		swapchainImageViews.emplace_back(
-			device->createImageViewUnique(
-				vk::ImageViewCreateInfo(
-					vk::ImageViewCreateFlags(),  // flags
-					image,                       // image
-					vk::ImageViewType::e2D,      // viewType
-					chosenSurfaceFormat.format,  // format
-					vk::ComponentMapping(),      // components
-					vk::ImageSubresourceRange(   // subresourceRange
-						vk::ImageAspectFlagBits::eColor,  // aspectMask
-						0,  // baseMipLevel
-						1,  // levelCount
-						0,  // baseArrayLayer
-						1   // layerCount
-					)
-				)
-			)
-		);
-
-	// depth image
 	depthImage=
 		device->createImageUnique(
 			vk::ImageCreateInfo(
 				vk::ImageCreateFlags(),  // flags
 				vk::ImageType::e2D,      // imageType
 				depthFormat,             // format
-				vk::Extent3D(currentSurfaceExtent.width,currentSurfaceExtent.height,1),  // extent
+				vk::Extent3D(framebufferExtent,1),  // extent
 				1,                       // mipLevels
 				1,                       // arrayLayers
 				vk::SampleCountFlagBits::e1,  // samples
@@ -5271,7 +4980,13 @@ static void recreateSwapchainAndPipeline()
 			)
 		);
 
-	// depth image memory
+	// image memories
+	colorImageMemory=allocateMemory(colorImage.get(),vk::MemoryPropertyFlagBits::eDeviceLocal);
+	device->bindImageMemory(
+		colorImage.get(),  // image
+		colorImageMemory.get(),  // memory
+		0  // memoryOffset
+	);
 	depthImageMemory=allocateMemory(depthImage.get(),vk::MemoryPropertyFlagBits::eDeviceLocal);
 	device->bindImageMemory(
 		depthImage.get(),  // image
@@ -5279,7 +4994,24 @@ static void recreateSwapchainAndPipeline()
 		0  // memoryOffset
 	);
 
-	// depth image view
+	// image views
+	colorImageView=
+		device->createImageViewUnique(
+			vk::ImageViewCreateInfo(
+				vk::ImageViewCreateFlags(),  // flags
+				colorImage.get(),            // image
+				vk::ImageViewType::e2D,      // viewType
+				colorFormat,                 // format
+				vk::ComponentMapping(),      // components
+				vk::ImageSubresourceRange(   // subresourceRange
+					vk::ImageAspectFlagBits::eColor,  // aspectMask
+					0,  // baseMipLevel
+					1,  // levelCount
+					0,  // baseArrayLayer
+					1   // layerCount
+				)
+			)
+		);
 	depthImageView=
 		device->createImageViewUnique(
 			vk::ImageViewCreateInfo(
@@ -5298,38 +5030,10 @@ static void recreateSwapchainAndPipeline()
 			)
 		);
 
-	// depth image layout
-	submitNowCommandBuffer->pipelineBarrier(
-		vk::PipelineStageFlagBits::eTopOfPipe,  // srcStageMask
-		vk::PipelineStageFlagBits::eEarlyFragmentTests,  // dstStageMask
-		vk::DependencyFlags(),  // dependencyFlags
-		0,nullptr,  // memoryBarrierCount,pMemoryBarriers
-		0,nullptr,  // bufferMemoryBarrierCount,pBufferMemoryBarriers
-		1,  // imageMemoryBarrierCount
-		&(const vk::ImageMemoryBarrier&)vk::ImageMemoryBarrier(  // pImageMemoryBarriers
-			vk::AccessFlags(),  // srcAccessMask
-			vk::AccessFlagBits::eDepthStencilAttachmentRead|vk::AccessFlagBits::eDepthStencilAttachmentWrite,  // dstAccessMask
-			vk::ImageLayout::eUndefined,  // oldLayout
-			vk::ImageLayout::eDepthStencilAttachmentOptimal,  // newLayout
-			VK_QUEUE_FAMILY_IGNORED,  // srcQueueFamilyIndex
-			VK_QUEUE_FAMILY_IGNORED,  // dstQueueFamilyIndex
-			depthImage.get(),  // image
-			vk::ImageSubresourceRange(  // subresourceRange
-				(depthFormat==vk::Format::eD32Sfloat)  // aspectMask
-					?vk::ImageAspectFlagBits::eDepth
-					:vk::ImageAspectFlagBits::eDepth|vk::ImageAspectFlagBits::eStencil,
-				0,  // baseMipLevel
-				1,  // levelCount
-				0,  // baseArrayLayer
-				1   // layerCount
-			)
-		)
-	);
-
 	// pipeline
 	auto createPipeline=
 		[](vk::ShaderModule vsModule,vk::ShaderModule fsModule,vk::PipelineLayout pipelineLayout,
-		   const vk::Extent2D currentSurfaceExtent,
+		   const vk::Extent2D framebufferExtent,
 		   const vk::PipelineVertexInputStateCreateInfo* vertexInputState=nullptr,
 		   vk::ShaderModule gsModule=nullptr,
 		   const vk::PipelineInputAssemblyStateCreateInfo* inputAssemblyState=nullptr)
@@ -5396,9 +5100,9 @@ static void recreateSwapchainAndPipeline()
 					&(const vk::PipelineViewportStateCreateInfo&)vk::PipelineViewportStateCreateInfo{  // pViewportState
 						vk::PipelineViewportStateCreateFlags(),  // flags
 						1,  // viewportCount
-						&(const vk::Viewport&)vk::Viewport(0.f,0.f,float(currentSurfaceExtent.width),float(currentSurfaceExtent.height),0.f,1.f),  // pViewports
+						&(const vk::Viewport&)vk::Viewport(0.f,0.f,float(framebufferExtent.width),float(framebufferExtent.height),0.f,1.f),  // pViewports
 						1,  // scissorCount
-						&(const vk::Rect2D&)vk::Rect2D(vk::Offset2D(0,0),currentSurfaceExtent)  // pScissors
+						&(const vk::Rect2D&)vk::Rect2D(vk::Offset2D(0,0),framebufferExtent)  // pScissors
 					},
 					&(const vk::PipelineRasterizationStateCreateInfo&)vk::PipelineRasterizationStateCreateInfo{  // pRasterizationState
 						vk::PipelineRasterizationStateCreateFlags(),  // flags
@@ -5545,39 +5249,39 @@ static void recreateSwapchainAndPipeline()
 	};
 
 	attributelessConstantOutputPipeline=
-		createPipeline(attributelessConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(attributelessConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	attributelessInputIndicesPipeline=
-		createPipeline(attributelessInputIndicesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(attributelessInputIndicesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	coordinateAttributePipeline=
-		createPipeline(coordinateAttributeVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent);
+		createPipeline(coordinateAttributeVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent);
 	coordinate4BufferPipeline=
-		createPipeline(coordinate4BufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(coordinate4BufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	coordinate3BufferPipeline=
-		createPipeline(coordinate3BufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(coordinate3BufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	singleMatrixUniformPipeline=
-		createPipeline(singleUniformMatrixVS.get(),constantColorFS.get(),oneUniformVSPipelineLayout.get(),currentSurfaceExtent);
+		createPipeline(singleUniformMatrixVS.get(),constantColorFS.get(),oneUniformVSPipelineLayout.get(),framebufferExtent);
 	matrixAttributePipeline=
-		createPipeline(matrixAttributeVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(matrixAttributeVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5628,9 +5332,9 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	matrixBufferPipeline=
-		createPipeline(matrixBufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent);
+		createPipeline(matrixBufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent);
 	twoAttributesPipeline=
-		createPipeline(twoAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5639,7 +5343,7 @@ static void recreateSwapchainAndPipeline()
 			               fourAttributesDescription.data(),  // pVertexAttributeDescriptions
 		               });
 	twoInterleavedAttributesPipeline=
-		createPipeline(twoAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               1,  // vertexBindingDescriptionCount
@@ -5667,28 +5371,28 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	twoBuffersPipeline=
-		createPipeline(twoBuffersVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoBuffersVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	twoBuffer3Pipeline=
-		createPipeline(twoBuffer3VS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoBuffer3VS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	twoInterleavedBuffersPipeline=
-		createPipeline(twoInterleavedBuffersVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoInterleavedBuffersVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	twoPackedAttributesPipeline=
-		createPipeline(twoPackedAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5710,35 +5414,35 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	twoPackedBuffersPipeline=
-		createPipeline(twoPackedBuffersVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedBuffersVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	twoPackedBuffersUsingStructPipeline=
-		createPipeline(twoPackedBuffersUsingStructVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedBuffersUsingStructVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	twoPackedBuffersUsingStructSlowPipeline=
-		createPipeline(twoPackedBuffersUsingStructSlowVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedBuffersUsingStructSlowVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	singlePackedBufferPipeline=
-		createPipeline(singlePackedBufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(singlePackedBufferVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	two4F32Two4U8AttributesPipeline=
-		createPipeline(fourAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               4,  // vertexBindingDescriptionCount
@@ -5793,10 +5497,10 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	twoPackedAttributesAndSingleMatrixPipeline=
-		createPipeline(twoPackedAttributesAndSingleMatrixVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedAttributesAndSingleMatrixVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	twoPackedAttributesAndMatrixPipeline=
-		createPipeline(twoPackedAttributesAndMatrixVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedAttributesAndMatrixVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5818,17 +5522,17 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	twoPackedBuffersAndMatrixPipeline=
-		createPipeline(twoPackedBuffersAndMatrixVS.get(),constantColorFS.get(),threeBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(twoPackedBuffersAndMatrixVS.get(),constantColorFS.get(),threeBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	fourAttributesPipeline=
-		createPipeline(fourAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &fourAttributesInputState);
 	fourInterleavedAttributesPipeline=
-		createPipeline(fourAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourAttributesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               1,  // vertexBindingDescriptionCount
@@ -5868,32 +5572,32 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	fourBuffersPipeline=
-		createPipeline(fourBuffersVS.get(),constantColorFS.get(),fourBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourBuffersVS.get(),constantColorFS.get(),fourBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	fourBuffer3Pipeline=
-		createPipeline(fourBuffer3VS.get(),constantColorFS.get(),fourBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourBuffer3VS.get(),constantColorFS.get(),fourBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	fourInterleavedBuffersPipeline=
-		createPipeline(fourInterleavedBuffersVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourInterleavedBuffersVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
 	fourAttributesAndMatrixPipeline=
-		createPipeline(fourAttributesAndMatrixVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fourAttributesAndMatrixVS.get(),constantColorFS.get(),oneBufferPipelineLayout.get(),framebufferExtent,
 		               &fourAttributesInputState);
 	if(enabledFeatures.geometryShader)
 		geometryShaderPipeline=
-			createPipeline(geometryShaderVS.get(),constantColorFS.get(),threeBuffersInGSPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(geometryShaderVS.get(),constantColorFS.get(),threeBuffersInGSPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -5902,7 +5606,7 @@ static void recreateSwapchainAndPipeline()
 			               geometryShaderGS.get());
 	if(enabledFeatures.geometryShader) {
 		geometryShaderConstantOutputPipeline=
-			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -5910,7 +5614,7 @@ static void recreateSwapchainAndPipeline()
 			               },
 			               geometryShaderConstantOutputGS.get());
 		geometryShaderConstantOutputTwoTrianglesPipeline=
-			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -5918,7 +5622,7 @@ static void recreateSwapchainAndPipeline()
 			               },
 			               geometryShaderConstantOutputTwoTrianglesGS.get());
 		geometryShaderNoOutputPipeline=
-			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -5927,7 +5631,7 @@ static void recreateSwapchainAndPipeline()
 			               geometryShaderNoOutputGS.get());
 	}
 	transformationThreeMatricesPipeline=
-		createPipeline(transformationThreeMatricesVS.get(),constantColorFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(transformationThreeMatricesVS.get(),constantColorFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5949,7 +5653,7 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	transformationFiveMatricesPipeline=
-		createPipeline(transformationFiveMatricesVS.get(),constantColorFS.get(),twoBuffersAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(transformationFiveMatricesVS.get(),constantColorFS.get(),twoBuffersAndUniformPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5971,7 +5675,7 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	transformationFiveMatricesPushConstantsPipeline=
-		createPipeline(transformationFiveMatricesPushConstantsVS.get(),constantColorFS.get(),twoBuffersAndPushConstantsPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(transformationFiveMatricesPushConstantsVS.get(),constantColorFS.get(),twoBuffersAndPushConstantsPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -5993,7 +5697,7 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	transformationFiveMatricesSpecializationConstantsPipeline=
-		createPipeline(transformationFiveMatricesSpecializationConstantsVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(transformationFiveMatricesSpecializationConstantsVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -6015,7 +5719,7 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	transformationFiveMatricesConstantsPipeline=
-		createPipeline(transformationFiveMatricesConstantsVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(transformationFiveMatricesConstantsVS.get(),constantColorFS.get(),twoBuffersPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               2,  // vertexBindingDescriptionCount
@@ -6038,7 +5742,7 @@ static void recreateSwapchainAndPipeline()
 		               });
 	if(enabledFeatures.geometryShader)
 		transformationFiveMatricesUsingGSPipeline=
-			createPipeline(geometryShaderVS.get(),constantColorFS.get(),fourBuffersAndUniformInGSPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(geometryShaderVS.get(),constantColorFS.get(),fourBuffersAndUniformInGSPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6047,7 +5751,7 @@ static void recreateSwapchainAndPipeline()
 			               transformationFiveMatricesUsingGS.get());
 	if(enabledFeatures.geometryShader)
 		transformationFiveMatricesUsingGSAndAttributesPipeline=
-			createPipeline(transformationFiveMatricesUsingGSAndAttributesVS.get(),constantColorFS.get(),twoBuffersAndUniformInGSPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(transformationFiveMatricesUsingGSAndAttributesVS.get(),constantColorFS.get(),twoBuffersAndUniformInGSPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               2,  // vertexBindingDescriptionCount
@@ -6070,7 +5774,7 @@ static void recreateSwapchainAndPipeline()
 			               },
 			               transformationFiveMatricesUsingGSAndAttributesGS.get());
 	phongTexturedFourAttributesFiveMatricesPipeline=
-		createPipeline(phongTexturedFourAttributesFiveMatricesVS.get(),phongTexturedDummyFS.get(),twoBuffersAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedFourAttributesFiveMatricesVS.get(),phongTexturedDummyFS.get(),twoBuffersAndUniformPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               4,  // vertexBindingDescriptionCount
@@ -6125,7 +5829,7 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	phongTexturedFourAttributesPipeline=
-		createPipeline(phongTexturedFourAttributesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedFourAttributesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               4,  // vertexBindingDescriptionCount
@@ -6180,28 +5884,28 @@ static void recreateSwapchainAndPipeline()
 			               }.data()
 		               });
 	phongTexturedPipeline=
-		createPipeline(phongTexturedVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedRowMajorPipeline=
-		createPipeline(phongTexturedRowMajorVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedRowMajorVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedMat4x3Pipeline=
-		createPipeline(phongTexturedMat4x3VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedMat4x3VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedMat4x3RowMajorPipeline=
-		createPipeline(phongTexturedMat4x3RowMajorVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedMat4x3RowMajorVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedQuat1Pipeline=
-		createPipeline(phongTexturedQuat1VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedQuat1VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedQuat2Pipeline=
-		createPipeline(phongTexturedQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedQuat3Pipeline=
-		createPipeline(phongTexturedQuat3VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedQuat3VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState);
 	phongTexturedQuat2PrimitiveRestartPipeline=
-		createPipeline(phongTexturedQuat2PrimitiveRestartVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedQuat2PrimitiveRestartVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState,
 		               nullptr,
 		               &(const vk::PipelineInputAssemblyStateCreateInfo&)vk::PipelineInputAssemblyStateCreateInfo{
@@ -6210,16 +5914,16 @@ static void recreateSwapchainAndPipeline()
 			               VK_TRUE  // primitiveRestartEnable
 		               });
 	phongTexturedSingleQuat2Pipeline=
-		createPipeline(phongTexturedSingleQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedSingleQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState,
 		               nullptr);
 	phongTexturedSingleQuat2TriStripPipeline=
-		createPipeline(phongTexturedSingleQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedSingleQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState,
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	phongTexturedSingleQuat2PrimitiveRestartPipeline=
-		createPipeline(phongTexturedSingleQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(phongTexturedSingleQuat2VS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 		               &twoPackedAttributesInputState,
 		               nullptr,
 		               &(const vk::PipelineInputAssemblyStateCreateInfo&)vk::PipelineInputAssemblyStateCreateInfo{
@@ -6229,7 +5933,7 @@ static void recreateSwapchainAndPipeline()
 		               });
 	if(enabledFeatures.shaderFloat64)
 		phongTexturedDMatricesOnlyInputPipeline=
-			createPipeline(phongTexturedDMatricesOnlyInputVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(phongTexturedDMatricesOnlyInputVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               2,  // vertexBindingDescriptionCount
@@ -6252,7 +5956,7 @@ static void recreateSwapchainAndPipeline()
 			               });
 	if(enabledFeatures.shaderFloat64)
 		phongTexturedDMatricesPipeline=
-			createPipeline(phongTexturedDMatricesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(phongTexturedDMatricesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               2,  // vertexBindingDescriptionCount
@@ -6275,7 +5979,7 @@ static void recreateSwapchainAndPipeline()
 			               });
 	if(enabledFeatures.shaderFloat64)
 		phongTexturedDMatricesDVerticesPipeline=
-			createPipeline(phongTexturedDMatricesDVerticesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(phongTexturedDMatricesDVerticesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               3,  // vertexBindingDescriptionCount
@@ -6304,7 +6008,7 @@ static void recreateSwapchainAndPipeline()
 			               });
 	if(enabledFeatures.shaderFloat64 && enabledFeatures.geometryShader)
 		phongTexturedInGSDMatricesDVerticesPipeline=
-			createPipeline(phongTexturedInGSDMatricesDVerticesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformInGSPipelineLayout.get(),currentSurfaceExtent,
+			createPipeline(phongTexturedInGSDMatricesDVerticesVS.get(),phongTexturedDummyFS.get(),bufferAndUniformInGSPipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 				               vk::PipelineVertexInputStateCreateFlags(),  // flags
 				               3,  // vertexBindingDescriptionCount
@@ -6333,7 +6037,7 @@ static void recreateSwapchainAndPipeline()
 			               },
 			               phongTexturedInGSDMatricesDVerticesGS.get());
 	fillrateContantColorPipeline=
-		createPipeline(fullscreenQuadVS.get(),constantColorFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6342,7 +6046,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateFourSmoothInterpolatorsPipeline=
-		createPipeline(fullscreenQuadFourInterpolatorsVS.get(),fullscreenQuadFourSmoothInterpolatorsFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadFourInterpolatorsVS.get(),fullscreenQuadFourSmoothInterpolatorsFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6351,7 +6055,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateFourFlatInterpolatorsPipeline=
-		createPipeline(fullscreenQuadFourInterpolatorsVS.get(),fullscreenQuadFourFlatInterpolatorsFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadFourInterpolatorsVS.get(),fullscreenQuadFourFlatInterpolatorsFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6360,7 +6064,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateTexturedPhongInterpolatorsPipeline=
-		createPipeline(fullscreenQuadTexturedPhongInterpolatorsVS.get(),fullscreenQuadTexturedPhongInterpolatorsFS.get(),simplePipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadTexturedPhongInterpolatorsVS.get(),fullscreenQuadTexturedPhongInterpolatorsFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6369,7 +6073,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateTexturedPhongPipeline=
-		createPipeline(fullscreenQuadTexturedPhongInterpolatorsVS.get(),phongTexturedFS.get(),phongTexturedPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadTexturedPhongInterpolatorsVS.get(),phongTexturedFS.get(),phongTexturedPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6378,7 +6082,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateTexturedPhongNotPackedPipeline=
-		createPipeline(fullscreenQuadTexturedPhongInterpolatorsVS.get(),phongTexturedNotPackedFS.get(),phongTexturedPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadTexturedPhongInterpolatorsVS.get(),phongTexturedNotPackedFS.get(),phongTexturedPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6387,7 +6091,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateUniformColor4fPipeline=
-		createPipeline(fullscreenQuadVS.get(),uniformColor4fFS.get(),oneUniformFSPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadVS.get(),uniformColor4fFS.get(),oneUniformFSPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6396,7 +6100,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	fillrateUniformColor4bPipeline=
-		createPipeline(fullscreenQuadVS.get(),uniformColor4bFS.get(),oneUniformFSPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadVS.get(),uniformColor4bFS.get(),oneUniformFSPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6405,7 +6109,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	phongNoSpecularPipeline=
-		createPipeline(fullscreenQuadTwoVec3InterpolatorsVS.get(),phongNoSpecularFS.get(),threeUniformFSPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadTwoVec3InterpolatorsVS.get(),phongNoSpecularFS.get(),threeUniformFSPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6414,7 +6118,7 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 	phongNoSpecularSingleUniformPipeline=
-		createPipeline(fullscreenQuadTwoVec3InterpolatorsVS.get(),phongNoSpecularSingleUniformFS.get(),oneUniformFSPipelineLayout.get(),currentSurfaceExtent,
+		createPipeline(fullscreenQuadTwoVec3InterpolatorsVS.get(),phongNoSpecularSingleUniformFS.get(),oneUniformFSPipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
@@ -6423,23 +6127,20 @@ static void recreateSwapchainAndPipeline()
 		               nullptr,
 		               &triangleStripInputAssemblyState);
 
-	// framebuffers
-	framebuffers.reserve(swapchainImages.size());
-	for(size_t i=0,c=swapchainImages.size(); i<c; i++)
-		framebuffers.emplace_back(
-			device->createFramebufferUnique(
-				vk::FramebufferCreateInfo(
-					vk::FramebufferCreateFlags(),   // flags
-					renderPass.get(),               // renderPass
-					2,  // attachmentCount
-					array<vk::ImageView,2>{  // pAttachments
-						swapchainImageViews[i].get(),
-						depthImageView.get()
-					}.data(),
-					currentSurfaceExtent.width,     // width
-					currentSurfaceExtent.height,    // height
-					1  // layers
-				)
+	// framebuffer
+	framebuffer=
+		device->createFramebufferUnique(
+			vk::FramebufferCreateInfo(
+				vk::FramebufferCreateFlags(),  // flags
+				renderPass.get(),              // renderPass
+				2,  // attachmentCount
+				array<vk::ImageView,2>{  // pAttachments
+					colorImageView.get(),
+					depthImageView.get()
+				}.data(),
+				framebufferExtent.width,   // width
+				framebufferExtent.height,  // height
+				1  // layers
 			)
 		);
 
@@ -6543,8 +6244,10 @@ static void recreateSwapchainAndPipeline()
 	createBuffer(sameVertexPackedAttribute1,  sameVertexPackedAttribute1Memory,  sameVertexPackedDataBufferSize,  true,vk::BufferUsageFlagBits::eVertexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(sameVertexPackedAttribute2,  sameVertexPackedAttribute2Memory,  sameVertexPackedDataBufferSize,  true,vk::BufferUsageFlagBits::eVertexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-	cout<<"First buffer and memory set"<<endl;
-	cout<<"   Creation time: "<<totalMeasurementTime*1000<<"ms"<<endl;
+	if(debug) {
+		cout<<"First buffer and memory set"<<endl;
+		cout<<"   Creation time: "<<totalMeasurementTime*1000<<"ms"<<endl;
+	}
 
 	if(sparseMode==SPARSE_NONE)
 	{
@@ -6558,9 +6261,11 @@ static void recreateSwapchainAndPipeline()
 			);
 			totalMemorySize+=bindInfo.size;
 		}
-		double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-		cout<<"   Standard binding: "<<totalMeasurementTime*1000<<"ms"<<endl;
-		cout<<"   (total amount of memory: "<<((totalMemorySize+512)/1024+512)/1024<<"MiB, number of memory allocations: "<<bindInfoList.size()<<")"<<endl;
+		if(debug) {
+			double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
+			cout<<"   Standard binding: "<<totalMeasurementTime*1000<<"ms"<<endl;
+			cout<<"   (total amount of memory: "<<((totalMemorySize+512)/1024+512)/1024<<"MiB, number of memory allocations: "<<bindInfoList.size()<<")"<<endl;
+		}
 		bindInfoList.clear();
 	}
 	else
@@ -6608,10 +6313,12 @@ static void recreateSwapchainAndPipeline()
 			vk::Fence()
 		);
 		sparseQueue.waitIdle();
-		double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-		cout<<"   Sparse binding: "<<totalMeasurementTime*1000<<"ms\n"
-		    <<"   Binding time of a memory block: "<<totalMeasurementTime/numBlocks*1e6<<"us"<<endl;
-		cout<<"   (number of blocks: "<<numBlocks<<", number of memory objects: "<<numMemObjs<<")"<<endl;
+		if(debug) {
+			double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
+			cout<<"   Sparse binding: "<<totalMeasurementTime*1000<<"ms\n"
+			    <<"   Binding time of a memory block: "<<totalMeasurementTime/numBlocks*1e6<<"us"<<endl;
+			cout<<"   (number of blocks: "<<numBlocks<<", number of memory objects: "<<numMemObjs<<")"<<endl;
+		}
 	}
 
 	// staging buffer struct
@@ -6706,16 +6413,16 @@ static void recreateSwapchainAndPipeline()
 	float* coords=reinterpret_cast<float*>(coordinate3StagingBuffer.map());
 	generateCoordinates(
 		coords,numTriangles,triangleSize,
-		renderingExtent.width,renderingExtent.height,false,
-		2./currentSurfaceExtent.width,2./currentSurfaceExtent.height,-1.,-1.);
+		framebufferExtent.width,framebufferExtent.height,false,
+		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	coordinate3StagingBuffer.unmap();
 
 	// vec4 coordinates
 	coords=reinterpret_cast<float*>(coordinate4StagingBuffer.map());
 	generateCoordinates(
 		coords,numTriangles,triangleSize,
-		renderingExtent.width,renderingExtent.height,true,
-		2./currentSurfaceExtent.width,2./currentSurfaceExtent.height,-1.,-1.);
+		framebufferExtent.width,framebufferExtent.height,true,
+		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 
 	// 2xvec4 in one buffer
 	float* pfloat=reinterpret_cast<float*>(twoInterleavedBuffersStagingBuffer.map());
@@ -6799,8 +6506,8 @@ static void recreateSwapchainAndPipeline()
 	// packedAttribute1
 	generateCoordinates(
 		reinterpret_cast<float*>(packedAttribute1StagingBuffer.map()),numTriangles,triangleSize,
-		renderingExtent.width,renderingExtent.height,true,
-		2./currentSurfaceExtent.width,2./currentSurfaceExtent.height,-1.,-1.);
+		framebufferExtent.width,framebufferExtent.height,true,
+		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=size_t(numTriangles)*3*4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(packedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
 
@@ -6926,8 +6633,8 @@ static void recreateSwapchainAndPipeline()
 	// stripPackedAttributes
 	generateStrips(
 		reinterpret_cast<float*>(stripPackedAttribute1StagingBuffer.map()),numTriangles/triStripLength,
-		triStripLength,triangleSize,renderingExtent.width,renderingExtent.height,true,
-		2./currentSurfaceExtent.width,2./currentSurfaceExtent.height,-1.,-1.);
+		triStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
+		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=stripPackedDataBufferSize/4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(stripPackedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
 	stripPackedAttribute1StagingBuffer.unmap();
@@ -6951,8 +6658,8 @@ static void recreateSwapchainAndPipeline()
 	// sharedVertexPackedAttributes
 	generateSharedVertexTriangles(
 		reinterpret_cast<float*>(sharedVertexPackedAttribute1StagingBuffer.map()),numTriangles/triStripLength,
-		triStripLength,triangleSize,renderingExtent.width,renderingExtent.height,true,
-		2./currentSurfaceExtent.width,2./currentSurfaceExtent.height,-1.,-1.);
+		triStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
+		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=sharedVertexPackedDataBufferSize/4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(sharedVertexPackedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
 	sharedVertexPackedAttribute1StagingBuffer.unmap();
@@ -7266,7 +6973,6 @@ static void recreateSwapchainAndPipeline()
 
 	// submit command buffer
 	submitNowCommandBuffer->end();
-	vk::UniqueFence fence(device->createFenceUnique(vk::FenceCreateInfo{vk::FenceCreateFlags()}));
 	graphicsQueue.submit(
 		vk::SubmitInfo(  // submits (vk::ArrayProxy)
 			0,nullptr,nullptr,       // waitSemaphoreCount,pWaitSemaphores,pWaitDstStageMask
@@ -7284,6 +6990,9 @@ static void recreateSwapchainAndPipeline()
 	);
 	if(r==vk::Result::eTimeout)
 		throw std::runtime_error("GPU timeout. Task is probably hanging.");
+	device->resetFences(
+		fence.get()
+	);
 
 	// release memory (to avoid gpu out-of-memory error)
 	coordinate4StagingBuffer.reset();
@@ -7363,18 +7072,20 @@ static void recreateSwapchainAndPipeline()
 	createBuffer(lightNotPackedUniformBuffer,  lightNotPackedUniformBufferMemory,  lightNotPackedUniformBufferSize,   false,vk::BufferUsageFlagBits::eUniformBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(allInOneLightingUniformBuffer,allInOneLightingUniformBufferMemory,allInOneLightingUniformBufferSize, false,vk::BufferUsageFlagBits::eUniformBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(indirectBuffer,               indirectBufferMemory,               (size_t(numTriangles)+1)*sizeof(vk::DrawIndirectCommand),true,vk::BufferUsageFlagBits::eIndirectBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
-	totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-	cout<<"Second buffer and memory set"<<endl;
-	cout<<"   Creation time: "<<totalMeasurementTime*1000<<"ms"<<endl;
+	if(debug) {
+		totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
+		cout<<"Second buffer and memory set"<<endl;
+		cout<<"   Creation time: "<<totalMeasurementTime*1000<<"ms"<<endl;
 #if 0
-	cout<<"Second buffer set memory requirements: "<<(transformationMatrix4x4BufferSize+
-			transformationMatrix4x4BufferSize+transformationMatrix4x4BufferSize+transformationMatrix4x3BufferSize+
-			transformationMatrix4x3BufferSize+transformationDMatrix4x4BufferSize+transformationMatrix4x4BufferSize+
-			transformationMatrix4x4BufferSize+normalMatrix4x3BufferSize+transformationPATBufferSize+
-			viewAndProjectionMatricesBufferSize+viewAndProjectionDMatricesBufferSize+materialUniformBufferSize+
-			materialNotPackedUniformBufferSize+globalLightUniformBufferSize+lightUniformBufferSize+
-			lightNotPackedUniformBufferSize+allInOneLightingUniformBufferSize)/1024/1024<<"MiB"<<endl;
+		cout<<"Second buffer set memory requirements: "<<(transformationMatrix4x4BufferSize+
+				transformationMatrix4x4BufferSize+transformationMatrix4x4BufferSize+transformationMatrix4x3BufferSize+
+				transformationMatrix4x3BufferSize+transformationDMatrix4x4BufferSize+transformationMatrix4x4BufferSize+
+				transformationMatrix4x4BufferSize+normalMatrix4x3BufferSize+transformationPATBufferSize+
+				viewAndProjectionMatricesBufferSize+viewAndProjectionDMatricesBufferSize+materialUniformBufferSize+
+				materialNotPackedUniformBufferSize+globalLightUniformBufferSize+lightUniformBufferSize+
+				lightNotPackedUniformBufferSize+allInOneLightingUniformBufferSize)/1024/1024<<"MiB"<<endl;
 #endif
+	}
 
 	if(sparseMode==SPARSE_NONE)
 	{
@@ -7388,9 +7099,11 @@ static void recreateSwapchainAndPipeline()
 			);
 			totalMemorySize+=bindInfo.size;
 		}
-		double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-		cout<<"   Standard binding: "<<totalMeasurementTime*1000<<"ms"<<endl;
-		cout<<"   (total amount of memory: "<<((totalMemorySize+512)/1024+512)/1024<<"MiB, number of memory allocations: "<<bindInfoList.size()<<")"<<endl;
+		if(debug) {
+			double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
+			cout<<"   Standard binding: "<<totalMeasurementTime*1000<<"ms"<<endl;
+			cout<<"   (total amount of memory: "<<((totalMemorySize+512)/1024+512)/1024<<"MiB, number of memory allocations: "<<bindInfoList.size()<<")"<<endl;
+		}
 		bindInfoList.clear();
 	}
 	else
@@ -7438,10 +7151,12 @@ static void recreateSwapchainAndPipeline()
 			vk::Fence()
 		);
 		sparseQueue.waitIdle();
-		double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-		cout<<"   Sparse binding: "<<totalMeasurementTime*1000<<"ms\n"
-		    <<"   Binding time of a memory block: "<<totalMeasurementTime/numBlocks*1e6<<"us"<<endl;
-		cout<<"   (number of blocks: "<<numBlocks<<", number of memory objects: "<<numMemObjs<<")"<<endl;
+		if(debug) {
+			double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
+			cout<<"   Sparse binding: "<<totalMeasurementTime*1000<<"ms\n"
+			    <<"   Binding time of a memory block: "<<totalMeasurementTime/numBlocks*1e6<<"us"<<endl;
+			cout<<"   (number of blocks: "<<numBlocks<<", number of memory objects: "<<numMemObjs<<")"<<endl;
+		}
 	}
 
 	// single matrix uniform staging buffer
@@ -7449,7 +7164,7 @@ static void recreateSwapchainAndPipeline()
 		1.f,0.f,0.f,0.f,
 		0.f,1.f,0.f,0.f,
 		0.f,0.f,1.f,0.f,
-		2.f/currentSurfaceExtent.width*64.f,0.f,0.f,1.f
+		2.f/framebufferExtent.width*64.f,0.f,0.f,1.f
 	};
 	StagingBuffer singleMatrixStagingBuffer(sizeof(singleMatrixData));
 	memcpy(singleMatrixStagingBuffer.map(),singleMatrixData,sizeof(singleMatrixData));
@@ -7458,7 +7173,7 @@ static void recreateSwapchainAndPipeline()
 	// single PAT uniform staging buffer
 	const float singlePATData[]{
 		0.f,0.f,0.f,1.f,  // zero rotation quaternion
-		2.f/currentSurfaceExtent.width*4.f,0.f,0.f,1.f,  // xyz translation + scale
+		2.f/framebufferExtent.width*4.f,0.f,0.f,1.f,  // xyz translation + scale
 	};
 	StagingBuffer singlePATStagingBuffer(sizeof(singlePATData));
 	memcpy(singlePATStagingBuffer.map(),singlePATData,sizeof(singlePATData));
@@ -7469,11 +7184,11 @@ static void recreateSwapchainAndPipeline()
 		1.f,0.f,0.f,0.f,
 		0.f,1.f,0.f,0.f,
 		0.f,0.f,1.f,0.f,
-		0.f,2.f/currentSurfaceExtent.height*64.f,0.f,1.f,
+		0.f,2.f/framebufferExtent.height*64.f,0.f,1.f,
 	};
 	const float matrixRowMajorData[16]{
 		1.f,0.f,0.f,0.f,
-		0.f,1.f,0.f,2.f/currentSurfaceExtent.height*64.f,
+		0.f,1.f,0.f,2.f/framebufferExtent.height*64.f,
 		0.f,0.f,1.f,0.f,
 		0.f,0.f,0.f,1.f,
 	};
@@ -7481,22 +7196,22 @@ static void recreateSwapchainAndPipeline()
 		1.f,0.f,0.f,
 		0.f,1.f,0.f,
 		0.f,0.f,1.f,
-		0.f,2.f/currentSurfaceExtent.height*64.f,0.f
+		0.f,2.f/framebufferExtent.height*64.f,0.f
 	};
 	const float matrix4x3RowMajorData[12]{
 		1.f,0.f,0.f,0.f,
-		0.f,1.f,0.f,2.f/currentSurfaceExtent.height*64.f,
+		0.f,1.f,0.f,2.f/framebufferExtent.height*64.f,
 		0.f,0.f,1.f,0.f,
 	};
 	const double dmatrixData[16]{
 		1.,0.,0.,0.,
 		0.,1.,0.,0.,
 		0.,0.,1.,0.,
-		0.,2./currentSurfaceExtent.height*64.,0.,1.
+		0.,2./framebufferExtent.height*64.,0.,1.
 	};
 	const float patData[8]{
 		0.f,0.f,0.f,1.f,  // zero rotation quaternion
-		0.f,2.f/currentSurfaceExtent.height*64.f,0.f,1.f,  // xyz translation + scale
+		0.f,2.f/framebufferExtent.height*64.f,0.f,1.f,  // xyz translation + scale
 	};
 	StagingBuffer sameMatrixStagingBuffer(transformationMatrix4x4BufferSize);
 	StagingBuffer sameMatrixRowMajorStagingBuffer(transformationMatrix4x4BufferSize);
@@ -7533,8 +7248,8 @@ static void recreateSwapchainAndPipeline()
 	StagingBuffer transformationMatrixStagingBuffer(transformationMatrix4x4BufferSize);
 	generateMatrices(
 		reinterpret_cast<float*>(transformationMatrixStagingBuffer.map()),numTriangles/2,triangleSize,
-		renderingExtent.width,renderingExtent.height,
-		2./currentSurfaceExtent.width,2./currentSurfaceExtent.height,0.,0.);
+		framebufferExtent.width,framebufferExtent.height,
+		2./framebufferExtent.width,2./framebufferExtent.height,0.,0.);
 	transformationMatrixStagingBuffer.unmap();
 
 	// normal matrix staging buffer
@@ -7906,7 +7621,6 @@ static void recreateSwapchainAndPipeline()
 
 	// submit command buffer
 	submitNowCommandBuffer->end();
-	device->resetFences(fence.get());
 	graphicsQueue.submit(
 		vk::SubmitInfo(  // submits (vk::ArrayProxy)
 			0,nullptr,nullptr,       // waitSemaphoreCount,pWaitSemaphores,pWaitDstStageMask
@@ -7924,6 +7638,9 @@ static void recreateSwapchainAndPipeline()
 	);
 	if(r==vk::Result::eTimeout)
 		throw std::runtime_error("GPU timeout. Task is probably hanging.");
+	device->resetFences(
+		fence.get()
+	);
 
 
 	// descriptor sets
@@ -9105,23 +8822,8 @@ static void recreateSwapchainAndPipeline()
 
 
 /// Queue one frame for rendering
-static bool queueFrame()
+static void frame()
 {
-	// acquire next image
-	uint32_t imageIndex;
-	vk::Result r=
-		device->acquireNextImageKHR(
-			swapchain.get(),                  // swapchain
-			numeric_limits<uint64_t>::max(),  // timeout
-			imageAvailableSemaphore.get(),    // semaphore to signal
-			vk::Fence(nullptr),               // fence to signal
-			&imageIndex                       // pImageIndex
-		);
-	if(r!=vk::Result::eSuccess) {
-		if(r==vk::Result::eErrorOutOfDateKHR||r==vk::Result::eSuboptimalKHR) { needResize=true; return false; }
-		else  vk::throwResultException(r,VULKAN_HPP_NAMESPACE_STRING"::Device::acquireNextImageKHR");
-	}
-
 	// reset command pool
 	// and begin command buffer
 	device->resetCommandPool(commandPool.get(), vk::CommandPoolResetFlags());
@@ -9144,7 +8846,7 @@ static bool queueFrame()
 
 	// record all tests
 	for(size_t j=0,c=tests.size(); j<c; j++)
-		shuffledTests[j]->func(commandBuffer.get(), imageIndex, shuffledTests[j]->timestampIndex, shuffledTests[j]->groupVariable);
+		shuffledTests[j]->func(commandBuffer.get(), shuffledTests[j]->timestampIndex, shuffledTests[j]->groupVariable);
 
 	// end command buffer
 	commandBuffer->end();
@@ -9152,29 +8854,25 @@ static bool queueFrame()
 	// submit work
 	graphicsQueue.submit(
 		vk::SubmitInfo(
-			1,&imageAvailableSemaphore.get(),     // waitSemaphoreCount+pWaitSemaphores
-			&(const vk::PipelineStageFlags&)vk::PipelineStageFlags(vk::PipelineStageFlagBits::eColorAttachmentOutput),  // pWaitDstStageMask
+			0,nullptr,nullptr,  // waitSemaphoreCount+pWaitSemaphores+pWaitDstStageMask
 			1,&commandBuffer.get(),  // commandBufferCount+pCommandBuffers
-			1,&renderFinishedSemaphore.get()      // signalSemaphoreCount+pSignalSemaphores
+			0,nullptr  // signalSemaphoreCount+pSignalSemaphores
 		),
-		vk::Fence(nullptr)
+		fence.get()
 	);
 
-	// submit image for presentation
-	r=presentationQueue.presentKHR(
-		&(const vk::PresentInfoKHR&)vk::PresentInfoKHR(
-			1,&renderFinishedSemaphore.get(),  // waitSemaphoreCount+pWaitSemaphores
-			1,&swapchain.get(),&imageIndex,    // swapchainCount+pSwapchains+pImageIndices
-			nullptr                            // pResults
-		)
+	// wait for work to complete
+	vk::Result r=
+		device->waitForFences(
+			fence.get(),         // fences (vk::ArrayProxy)
+			VK_TRUE,       // waitAll
+			uint64_t(3e9)  // timeout (3s)
+		);
+	if(r==vk::Result::eTimeout)
+		throw std::runtime_error("GPU timeout. Task is probably hanging.");
+	device->resetFences(
+		fence.get()
 	);
-	if(r!=vk::Result::eSuccess) {
-		if(r==vk::Result::eErrorOutOfDateKHR||r==vk::Result::eSuboptimalKHR) { needResize=true; return false; }
-		else  vk::throwResultException(r,VULKAN_HPP_NAMESPACE_STRING"::Queue::presentKHR");
-	}
-
-	// return success
-	return true;
 }
 
 
@@ -9422,8 +9120,7 @@ static void testMemoryAllocationPerformance(vk::BufferCreateFlags bufferFlags,un
 int main(int argc,char** argv)
 {
 	// print header
-	cout << appName << " tests various performance characteristics\n"
-		"   of the Vulkan physical device.\n" << endl;
+	cout << appName << " tests various performance characteristics of Vulkan devices.\n" << endl;
 
 	// catch exceptions
 	// (vulkan.hpp fuctions throw if they fail)
@@ -9447,6 +9144,7 @@ int main(int argc,char** argv)
 				else if(strcmp(argv[i], "--sparse-binding") == 0)  sparseMode = SPARSE_BINDING;
 				else if(strcmp(argv[i], "--sparse-residency") == 0)  sparseMode = SPARSE_RESIDENCY;
 				else if(strcmp(argv[i], "--sparse-residency-aliased") == 0)  sparseMode = SPARSE_RESIDENCY_ALIASED;
+				else if(strcmp(argv[i], "--debug") == 0 || strcmp(argv[i], "-d") == 0)  debug = true;
 				else if(strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)  printHelp = true;
 				else {
 					cout << "Invalid argument: " << argv[i] << endl;
@@ -9483,6 +9181,7 @@ int main(int argc,char** argv)
 			        "   --sparse-binding - sparse mode used during the main test\n"
 			        "   --sparse-residency - sparse mode used during the main test\n"
 			        "   --sparse-residency-aliased - sparse mode used during the main test\n"
+			        "   --debug or -d - print additional debug info\n"
 			        "   --help or -h - prints the usage information" << endl;
 			exit(99);
 		}
@@ -9494,81 +9193,15 @@ int main(int argc,char** argv)
 		// create test objects
 		initTests();
 
+		// recreate swapchain
+		resizeFramebuffer(defaultFramebufferExtent);
+
 		auto startTime=chrono::steady_clock::now();
 
-#ifdef _WIN32
-
-		// run Win32 event loop
-		MSG msg;
 		while(true){
 
-			// process messages
-			while(PeekMessage(&msg,NULL,0,0,PM_REMOVE)>0) {
-				if(msg.message==WM_QUIT)
-					goto ExitMainLoop;
-				TranslateMessage(&msg);
-				DispatchMessage(&msg);
-			}
-
-#else
-
-		// run Xlib event loop
-		XEvent e;
-		while(true) {
-
-			// process messages
-			while(XPending(display)>0) {
-				XNextEvent(display,&e);
-				if(e.type==ConfigureNotify && e.xconfigure.window==window) {
-					vk::Extent2D newSize(e.xconfigure.width,e.xconfigure.height);
-					if(newSize!=windowSize) {
-						needResize=true;
-						windowSize=newSize;
-					}
-					continue;
-				}
-				if(e.type==ClientMessage && ulong(e.xclient.data.l[0])==wmDeleteMessage)
-					goto ExitMainLoop;
-			}
-
-#endif
-
-			// recreate swapchain if necessary
-			if(needResize) {
-
-				// recreate only upon surface extent change
-				vk::SurfaceCapabilitiesKHR surfaceCapabilities=physicalDevice.getSurfaceCapabilitiesKHR(surface.get());
-				if(surfaceCapabilities.currentExtent!=currentSurfaceExtent) {
-
-					// avoid 0,0 surface extent as creation of swapchain would fail
-					// (0,0 is returned on some platforms (particularly Windows) when window is minimized)
-					if(surfaceCapabilities.currentExtent.width==0 || surfaceCapabilities.currentExtent.height==0)
-						continue;
-
-					// new currentSurfaceExtent
-					currentSurfaceExtent=
-						(surfaceCapabilities.currentExtent.width!=std::numeric_limits<uint32_t>::max())
-							?surfaceCapabilities.currentExtent
-							:vk::Extent2D{max(min(windowSize.width,surfaceCapabilities.maxImageExtent.width),surfaceCapabilities.minImageExtent.width),
-										  max(min(windowSize.height,surfaceCapabilities.maxImageExtent.height),surfaceCapabilities.minImageExtent.height)};
-
-					// recreate swapchain
-					recreateSwapchainAndPipeline();
-				}
-
-				// restart measurement
-				startTime=chrono::steady_clock::now();
-
-				needResize=false;
-			}
-
-			// queue frame
-			if(!queueFrame())
-				continue;
-
-			// wait for rendering to complete
-			presentationQueue.waitIdle();
-			graphicsQueue.waitIdle();
+			// render frame
+			frame();
 
 			// read timestamps
 			vector<uint64_t> timestamps(tests.size()*2);
@@ -9621,7 +9254,7 @@ int main(int argc,char** argv)
 					}
 				}
 				cout<<"\nFragment throughput:"<<endl;
-				size_t numScreenFragments=size_t(currentSurfaceExtent.width)*currentSurfaceExtent.height;
+				size_t numScreenFragments=size_t(framebufferExtent.width)*framebufferExtent.height;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
 					if(t.type==Test::Type::FragmentThroughput) {
@@ -9673,18 +9306,12 @@ int main(int argc,char** argv)
 						physicalDevice.createDeviceUnique(
 							vk::DeviceCreateInfo{
 								vk::DeviceCreateFlags(),  // flags
-								(presentationQueueFamily==graphicsQueueFamily && sparseQueueFamily==graphicsQueueFamily)  // queueCreateInfoCount
-									?uint32_t(1):uint32_t(3),
-								array<const vk::DeviceQueueCreateInfo,3>{  // pQueueCreateInfos
+								(sparseQueueFamily==graphicsQueueFamily)  // queueCreateInfoCount
+									?uint32_t(1):uint32_t(2),
+								array<const vk::DeviceQueueCreateInfo,2>{  // pQueueCreateInfos
 									vk::DeviceQueueCreateInfo{
 										vk::DeviceQueueCreateFlags(),
 										graphicsQueueFamily,
-										1,
-										&(const float&)1.f,
-									},
-									vk::DeviceQueueCreateInfo{
-										vk::DeviceQueueCreateFlags(),
-										presentationQueueFamily,
 										1,
 										&(const float&)1.f,
 									},
@@ -9696,8 +9323,8 @@ int main(int argc,char** argv)
 									},
 								}.data(),
 								0,nullptr,  // no layers
-								1,          // number of enabled extensions
-								array<const char*,1>{"VK_KHR_swapchain"}.data(),  // enabled extension names
+								0,        // number of enabled extensions
+								nullptr,  // enabled extension names
 								&enabledFeatures,  // enabled features
 							}
 						);
@@ -9708,18 +9335,12 @@ int main(int argc,char** argv)
 							physicalDevice.createDeviceUnique(
 								vk::DeviceCreateInfo{
 									vk::DeviceCreateFlags(),  // flags
-									(presentationQueueFamily==graphicsQueueFamily && sparseQueueFamily==graphicsQueueFamily)  // queueCreateInfoCount
-										?uint32_t(1):uint32_t(3),
-									array<const vk::DeviceQueueCreateInfo,3>{  // pQueueCreateInfos
+									(sparseQueueFamily==graphicsQueueFamily)  // queueCreateInfoCount
+										?uint32_t(1):uint32_t(2),
+									array<const vk::DeviceQueueCreateInfo,2>{  // pQueueCreateInfos
 										vk::DeviceQueueCreateInfo{
 											vk::DeviceQueueCreateFlags(),
 											graphicsQueueFamily,
-											1,
-											&(const float&)1.f,
-										},
-										vk::DeviceQueueCreateInfo{
-											vk::DeviceQueueCreateFlags(),
-											presentationQueueFamily,
 											1,
 											&(const float&)1.f,
 										},
@@ -9731,8 +9352,8 @@ int main(int argc,char** argv)
 										},
 									}.data(),
 									0,nullptr,  // no layers
-									1,          // number of enabled extensions
-									array<const char*,1>{"VK_KHR_swapchain"}.data(),  // enabled extension names
+									0,        // number of enabled extensions
+									nullptr,  // enabled extension names
 									&enabledFeatures,  // enabled features
 								}
 							);
@@ -9804,7 +9425,6 @@ int main(int argc,char** argv)
 
 					// get queues
 					graphicsQueue=device->getQueue(graphicsQueueFamily,0);
-					presentationQueue=device->getQueue(presentationQueueFamily,0);
 					sparseQueue=device->getQueue(sparseQueueFamily,0);
 
 					// perform test
