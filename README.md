@@ -3,9 +3,9 @@ Vulkan Performance Measurement Tool
 
 vkperf tests various performance characteristics of Vulkan devices.
 It is aimed on developer needs. It provides them with performance characteristics of their devices,
-allowing them to make better decisions during the design of their rendering algorithms and during application design in general.
+allowing them to make better decisions during the design of their rendering algorithms and the design of Vulkan-related code in general.
 
-## Usage:
+## Usage
 <pre>
 vkperf [deviceNameFilter] [deviceIndex] [options]
     --long - perform long test; testing time is extended to 20 second
@@ -23,7 +23,7 @@ vkperf [deviceNameFilter] [deviceIndex] [options]
     --help or -h - prints the usage information
 </pre>
 
-## Tests performed:
+## Tests performed
 * Triangle throughput
   * Vertex shader throughput
   * Geometry shader throughput
@@ -49,8 +49,9 @@ vkperf [deviceNameFilter] [deviceIndex] [options]
   * DeviceMemory creation time for various memory sizes
   * Bind time for various Buffer and DeviceMemory sizes
 
-## License:
+## License
 Public domain
 
-## Author:
+## Author
 PC John (Jan Pečiva, peciva _at fit.vut.cz)
+
