@@ -1,17 +1,13 @@
-#ifdef _WIN32
-# define VK_USE_PLATFORM_WIN32_KHR
-#else
-# include <X11/Xlib.h>
-# include <X11/Xutil.h>
-# define VK_USE_PLATFORM_XLIB_KHR
-#endif
 #include <vulkan/vulkan.hpp>
 #include <array>
 #include <chrono>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <random>
+#include <regex>
 #include <sstream>
 
 using namespace std;
@@ -3221,7 +3217,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	enabledFeatures.setShaderFloat64(physicalFeatures.shaderFloat64);
 
 	// DeviceID and VendorID
-	cout << "VendorID: 0x" << hex << physicalDeviceProperties.vendorID;
+	cout << "VendorID:  0x" << hex << physicalDeviceProperties.vendorID;
 	switch(physicalDeviceProperties.vendorID) {
 	case 0x1002: cout << " (AMD/ATI)" << endl; break;
 	case 0x10DE: cout << " (Nvidia)" << endl; break;
@@ -3229,7 +3225,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	case 0x10005: cout << " (Mesa)"; break;
 	default: cout << endl;
 	}
-	cout << "DeviceID: 0x" << physicalDeviceProperties.deviceID << dec << endl;
+	cout << "DeviceID:  0x" << physicalDeviceProperties.deviceID << dec << endl;
 
 	// driver info
 	cout << "Vulkan version:  " << VK_VERSION_MAJOR(physicalDeviceProperties.apiVersion) << "."
@@ -3298,7 +3294,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 			}
 		cout<<")"<<endl;
 	}
-	cout << "Max memory allocations: " << physicalDeviceProperties.limits.maxMemoryAllocationCount << endl;
+	cout << "Max memory allocations:  " << physicalDeviceProperties.limits.maxMemoryAllocationCount << endl;
 
 	switch(sparseMode) {
 	case SPARSE_NONE:
@@ -3364,7 +3360,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 		sparseQueue=device->getQueue(sparseQueueFamily,0);
 
 	// print memory alignment
-	cout<<"Standard (non-sparse) buffer alignment: "
+	cout<<"Standard (non-sparse) buffer alignment:  "
 	    <<getMemoryAlignment(device.get(),1,vk::BufferCreateFlags())<<endl;
 
 	// set sparse block variables
@@ -3378,33 +3374,83 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	}
 
 	// number of triangles
-	// (reduce the number on integrated graphics as it may easily run out of memory)
+	// (reduce the number of triangles based on amount of graphics memory as we might easily run out of it)
 	if(minimalTest)
 		numTriangles = 1000;
 	else {
-		if(gpuMemory >= 2.8*1024*1024*1024) // >=2.8GiB
+		if(gpuMemory >= 5.6*1024*1024*1024) // >=5.6GiB
 			numTriangles = numTrianglesStandard;
-		else if(gpuMemory >= 1.4*1024*1024*1024) // >=1.4GiB
+		else if(gpuMemory >= 2.8*1024*1024*1024) // >=2.8GiB
 			numTriangles = numTrianglesStandard/2;
-		else if(gpuMemory >= 700*1024*1024) // >=700MiB
+		else if(gpuMemory >= 1.4*1024*1024*1024) // >=1.4GiB
 			numTriangles = numTrianglesStandard/5;
-		else if(gpuMemory >= 400*1024*1024) // >=400MiB
+		else if(gpuMemory >= 700*1024*1024) // >=700MiB
 			numTriangles = numTrianglesStandard/10;
-		else
+		else if(gpuMemory >= 400*1024*1024) // >=400MiB
 			numTriangles = numTrianglesStandard/20;
+		else
+			numTriangles = numTrianglesStandard/50;
 		if(physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu)
 			numTriangles = min(numTriangles, numTrianglesReduced);
 	}
-	cout << "Number of triangles for tests: " << numTriangles << endl;
+	cout << "Number of triangles for tests:  " << numTriangles << endl;
 
 	// print sparse mode for tests
 	switch(sparseMode) {
-	case SPARSE_NONE:              cout<<"Sparse mode for tests: None"<<endl; break;
-	case SPARSE_BINDING:           cout<<"Sparse mode for tests: Binding"<<endl; break;
-	case SPARSE_RESIDENCY:         cout<<"Sparse mode for tests: Residency"<<endl; break;
-	case SPARSE_RESIDENCY_ALIASED: cout<<"Sparse mode for tests: ResidencyAliased"<<endl; break;
+	case SPARSE_NONE:              cout<<"Sparse mode for tests:  None"<<endl; break;
+	case SPARSE_BINDING:           cout<<"Sparse mode for tests:  Binding"<<endl; break;
+	case SPARSE_RESIDENCY:         cout<<"Sparse mode for tests:  Residency"<<endl; break;
+	case SPARSE_RESIDENCY_ALIASED: cout<<"Sparse mode for tests:  ResidencyAliased"<<endl; break;
 	default: assert(0 && "This should never happen.");
 	}
+
+	// timestamp properties
+	timestampValidBits=
+		physicalDevice.getQueueFamilyProperties()[graphicsQueueFamily].timestampValidBits;
+	timestampPeriod_ns=
+		physicalDeviceProperties.limits.timestampPeriod;
+	cout<<"Timestamp number of bits:  "<<timestampValidBits<<endl;
+	cout<<"Timestamp period:  "<<timestampPeriod_ns<<"ns"<<endl;
+	if(timestampValidBits==0)
+		throw runtime_error("Timestamps are not supported.");
+
+#ifdef _WIN32
+#else
+	cout << "Operating system:  ";
+	{
+		ifstream f("/etc/lsb-release");
+		if(!f)  goto osInfoFailed;
+		string s{istreambuf_iterator<char>(f), istreambuf_iterator<char>()};
+		if(!f)  goto osInfoFailed;
+		regex expr("(?:^|\\n|\\r)[\\t ]*DISTRIB_DESCRIPTION[\\t ]*=[\\t ]*(?:\"([^\\r\\n:]*)\"|([^\\r\\n:]*))", std::regex_constants::icase);
+		sregex_iterator it(s.begin(), s.end(), expr);
+		if(it == sregex_iterator{})  goto osInfoFailed;
+		if((*it)[1] != "")
+			cout << (*it)[1] << endl;
+		else
+			cout << (*it)[2] << endl;
+	}
+	goto osInfoSucceed;
+osInfoFailed:
+	cout << "< unknown >" << endl;
+osInfoSucceed:;
+	cout << "Processor:  ";
+	{
+		ifstream f("/proc/cpuinfo");
+		if(!f)  goto cpuInfoFailed;
+		string s{istreambuf_iterator<char>(f), istreambuf_iterator<char>()};
+		if(!f)  goto cpuInfoFailed;
+		regex expr("(?:^|\\n|\\r)[\\t ]*model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+		sregex_iterator it(s.begin(), s.end(), expr);
+		if(it == sregex_iterator{})  goto cpuInfoFailed;
+		cout << (*it)[1] << endl;
+	}
+	goto cpuInfoSucceed;
+cpuInfoFailed:
+	cout << "< unknown >" << endl;
+cpuInfoSucceed:;
+#endif
+	cout << endl;
 
 	// choose surface format
 	depthFormat=
@@ -8798,16 +8844,6 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	);
 
 
-	// timestamp properties
-	timestampValidBits=
-		physicalDevice.getQueueFamilyProperties()[graphicsQueueFamily].timestampValidBits;
-	timestampPeriod_ns=
-		physicalDeviceProperties.limits.timestampPeriod;
-	cout<<"Timestamp number of bits:  "<<timestampValidBits<<endl;
-	cout<<"Timestamp period:          "<<timestampPeriod_ns<<"ns\n"<<endl;
-	if(timestampValidBits==0)
-		throw runtime_error("Timestamps are not supported.");
-
 	// timestamp pool
 	timestampPool=
 		device->createQueryPoolUnique(
@@ -9120,6 +9156,7 @@ static void testMemoryAllocationPerformance(vk::BufferCreateFlags bufferFlags,un
 int main(int argc,char** argv)
 {
 	// print header
+	cout << endl;
 	cout << appName << " tests various performance characteristics of Vulkan devices.\n" << endl;
 
 	// catch exceptions
@@ -9433,6 +9470,7 @@ int main(int argc,char** argv)
 					// return original device back
 					device.swap(sparseDevice);
 				}
+				cout<<endl;
 
 				break;
 			}
