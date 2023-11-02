@@ -1,4 +1,3 @@
-#include <vulkan/vulkan.hpp>
 #include <array>
 #include <chrono>
 #include <fstream>
@@ -9,6 +8,11 @@
 #include <random>
 #include <regex>
 #include <sstream>
+#ifdef _WIN32
+# include <windows.h>
+# include <intrin.h>
+#endif
+#include <vulkan/vulkan.hpp>
 
 using namespace std;
 
@@ -16,6 +20,10 @@ using namespace std;
 // constants
 static const string appName = "vkperf";
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
+static constexpr const double longTestTime = 60.;
+static constexpr const double standardTestTime = 2.;
+static constexpr const uint32_t numTrianglesStandard = uint32_t(1*1e6);
+static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(1*1e5);
 
 
 // Vulkan instance
@@ -382,8 +390,6 @@ static vk::UniqueSampler trilinearSampler;
 static vk::UniqueQueryPool timestampPool;
 static uint32_t timestampValidBits=0;
 static float timestampPeriod_ns=0;
-static const uint32_t numTrianglesStandard=uint32_t(1*1e6);
-static const uint32_t numTrianglesReduced=uint32_t(1*1e5);
 static uint32_t numTriangles;
 static bool minimalTest=false;
 static bool longTest=false;
@@ -3391,7 +3397,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 		else
 			numTriangles = numTrianglesStandard/50;
 		if(physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu)
-			numTriangles = min(numTriangles, numTrianglesReduced);
+			numTriangles = min(numTriangles, numTrianglesIntegratedGpu);
 	}
 	cout << "Number of triangles for tests:  " << numTriangles << endl;
 
@@ -3414,9 +3420,71 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	if(timestampValidBits==0)
 		throw runtime_error("Timestamps are not supported.");
 
-#ifdef _WIN32
-#else
 	cout << "Operating system:  ";
+#ifdef _WIN32
+	{
+		// read OS version from registry
+		HKEY hKey;
+		LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &hKey);
+		if(r == ERROR_SUCCESS) {
+			vector<char> buf;
+			DWORD size;
+			r = RegQueryValueExA(hKey, "ProductName", 0, NULL, NULL, &size);
+			if(r == ERROR_SUCCESS) {
+				size += 1; // space for terminating character
+				buf.resize(size+1);
+				r = RegQueryValueExA(hKey, "ProductName", 0, NULL, reinterpret_cast<LPBYTE>(buf.data()), &size);
+				if(r == ERROR_SUCCESS) {
+					buf[size] = 0;
+					cout << buf.data();
+				} else
+					cout << "< registry error, unknown Windows >";
+			}
+			else
+				cout << "< registry error, unknown Windows >";
+			if(RegCloseKey(hKey) != ERROR_SUCCESS)
+				cout << "  (registry error)";
+		}
+		else
+			cout << "< registry error, unknown Windows >";
+
+		// get "Nt" version numbers
+		cout << "\n                   Version number: ";
+		HMODULE h = GetModuleHandleW(L"ntdll.dll"); // since WinXP
+		if(h == nullptr)
+			goto osInfoFailed;
+		using RtlGetNtVersionNumbersPtr = void (*)(DWORD* majorVersion, DWORD* minorVersion, DWORD* buildNumber);
+		RtlGetNtVersionNumbersPtr RtlGetNtVersionNumbers = reinterpret_cast<RtlGetNtVersionNumbersPtr>(GetProcAddress(h, "RtlGetNtVersionNumbers")); // since WinXP
+		if(RtlGetNtVersionNumbers == nullptr)
+			goto osInfoFailed;
+		DWORD majorVersion = 0;
+		DWORD minorVersion = 0;
+		DWORD buildNumber = 0;
+		RtlGetNtVersionNumbers(&majorVersion, &minorVersion, &buildNumber);
+		cout << majorVersion << "." << minorVersion
+		     << ", build number: " << (buildNumber&0xffff) << endl;
+		goto osInfoSucceed;
+	}
+osInfoFailed:
+	cout << "< unknown >" << endl;
+osInfoSucceed:;
+	cout << "Processor:  ";
+	{
+		union {
+			char brandString[4*12+1] = {0};
+			int cpuInfo[12];
+		};
+		__cpuid(cpuInfo, 0x80000000);
+		if(cpuInfo[0] >= 0x80000004) {
+			__cpuid(&cpuInfo[0], 0x80000002);
+			__cpuid(&cpuInfo[4], 0x80000003);
+			__cpuid(&cpuInfo[8], 0x80000004);
+			cout << brandString << endl;
+		}
+		else
+			cout << "< unknown >" << endl;
+	}
+#else
 	{
 		ifstream f("/etc/lsb-release");
 		if(!f)  goto osInfoFailed;
@@ -3432,7 +3500,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	}
 	goto osInfoSucceed;
 osInfoFailed:
-	cout << "< unknown >" << endl;
+	cout << "< unknown, non-Windows >" << endl;
 osInfoSucceed:;
 	cout << "Processor:  ";
 	{
@@ -9207,17 +9275,19 @@ int main(int argc,char** argv)
 
 		// print usage info and exit
 		if(printHelp) {
-			cout << "\nUsage:\n"
+			cout << "Usage:\n"
 			        "   " << appName << " [deviceNameFilter] [deviceIndex] [options]\n"
-			        "   --long - perform long test; testing time is extended to 20 second\n"
-			        "            from the default of 2 seconds\n"
+			        "   --long - perform long test; testing time is extended to " << int(longTestTime+0.5) << " seconds\n"
+			        "            from the default of " << int(standardTestTime+0.5) << " seconds\n"
 			        "   --minimal - perform minimal test; for debugging purposes,\n"
 			        "               number of triangles used for testing is lagerly\n"
 			        "               reduced, making measurements possibly very imprecise\n"
-			        "   --sparse-none - sparse mode used during the main test\n"
-			        "   --sparse-binding - sparse mode used during the main test\n"
-			        "   --sparse-residency - sparse mode used during the main test\n"
-			        "   --sparse-residency-aliased - sparse mode used during the main test\n"
+			        "   --sparse-none - no sparse mode is used during the main test;\n"
+			        "                   this is the default\n"
+			        "   --sparse-binding - sparse binding mode is used during the main test\n"
+			        "   --sparse-residency - sparse residency mode is used during the main test\n"
+			        "   --sparse-residency-aliased - sparse residency aliased mode is used\n"
+			        "                                during the main test\n"
 			        "   --debug or -d - print additional debug info\n"
 			        "   --help or -h - prints the usage information" << endl;
 			exit(99);
@@ -9274,7 +9344,7 @@ int main(int argc,char** argv)
 
 			// print the result at the end
 			double totalMeasurementTime=chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
-			if(totalMeasurementTime>((longTest)?60.:2.)) {
+			if(totalMeasurementTime>((longTest)?longTestTime:standardTestTime)) {
 				cout<<"Triangle throughput:"<<endl;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
