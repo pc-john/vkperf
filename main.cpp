@@ -488,14 +488,14 @@ static const uint32_t fourAttributesAndMatrixVS_spirv[]={
 static const uint32_t geometryShaderConstantOutputVS_spirv[]={
 #include "geometryShaderConstantOutput.vert.spv"
 };
+static const uint32_t geometryShaderNoOutputGS_spirv[]={
+#include "geometryShaderNoOutput.geom.spv"
+};
 static const uint32_t geometryShaderConstantOutputGS_spirv[]={
 #include "geometryShaderConstantOutput.geom.spv"
 };
 static const uint32_t geometryShaderConstantOutputTwoTrianglesGS_spirv[]={
 #include "geometryShaderConstantOutputTwoTriangles.geom.spv"
-};
-static const uint32_t geometryShaderNoOutputGS_spirv[]={
-#include "geometryShaderNoOutput.geom.spv"
 };
 static const uint32_t geometryShaderVS_spirv[]={
 #include "geometryShader.vert.spv"
@@ -763,8 +763,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   GS max throughput (geometry shader no output,\n"
-		"      one draw call, attributeless):           ",
+		"   GS max throughput when no output is produced\n"
+		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -791,8 +791,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   GS max throughput (geometry shader constant output,\n"
-		"      one draw call, attributeless):           ",
+		"   GS max throughput when single constant triangle is produced\n"
+		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -819,9 +819,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   GS max throughput (geometry shader constant output\n"
-		"      of two separate triangles, one draw call,\n"
-		"      attributeless):                          ",
+		"   GS max throughput when two constant triangles are produced\n"
+		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -849,8 +848,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Instancing throughput (single triangle instanced,\n"
-		"      constant VS output, one draw call,\n"
+		"   Instancing throughput of vkComdDraw()\n"
+		"      (single triangle instanced, constant VS output, one draw call,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -863,9 +862,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Instancing throughput (single triangle instanced,\n"
-		"      one indirect draw call, one indirect record,\n"
-		"      attributeless:                           ",
+		"   Instancing throughput of vkCmdDrawIndirect()\n"
+		"      (single triangle instanced, one indirect draw call,\n"
+		"      one indirect record, attributeless:      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -5719,6 +5718,14 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 			               },
 			               geometryShaderGS.get());
 	if(enabledFeatures.geometryShader) {
+		geometryShaderNoOutputPipeline=
+			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
+			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
+				               vk::PipelineVertexInputStateCreateFlags(),  // flags
+				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
+				               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
+			               },
+			               geometryShaderNoOutputGS.get());
 		geometryShaderConstantOutputPipeline=
 			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
@@ -5735,14 +5742,6 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 				               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 			               },
 			               geometryShaderConstantOutputTwoTrianglesGS.get());
-		geometryShaderNoOutputPipeline=
-			createPipeline(geometryShaderConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
-			               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
-				               vk::PipelineVertexInputStateCreateFlags(),  // flags
-				               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
-				               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
-			               },
-			               geometryShaderNoOutputGS.get());
 	}
 	transformationThreeMatricesPipeline=
 		createPipeline(transformationThreeMatricesVS.get(),constantColorFS.get(),bufferAndUniformPipelineLayout.get(),framebufferExtent,
@@ -9354,7 +9353,7 @@ int main(int argc,char** argv)
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
-							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " millions per second" << endl;
+							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
 						}
 						else
 							cout << t.text << " not supported" << endl;
