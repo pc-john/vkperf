@@ -879,9 +879,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Draw command throughput,\n"
-		"      per-triangle draw command in command buffer,\n"
-		"      attributeless, constant VS output:       ",
+		"   Draw command throughput\n"
+		"      (per-triangle draw command in command buffer,\n"
+		"      attributeless, constant VS output):      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -894,9 +894,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Draw command throughput,\n"
-		"      per-triangle draw command in command buffer,\n"
-		"      vec4 coordinate attribute:               ",
+		"   Draw command throughput with vec4 attribute\n"
+		"      (per-triangle draw command in command buffer,\n"
+		"      vec4 coordinate attribute):              ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -909,8 +909,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Indirect draw command throughput,\n"
-		"      one indirect draw call, per-triangle record,\n"
+		"   Indirect command processing throughput\n"
+		"      (one indirect draw call, per-triangle record,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -930,8 +930,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Indirect draw command throughput,\n"
-		"      one indirect draw call, per-triangle record,\n"
+		"   Indirect command processing throughput with vec4 attribute\n"
+		"      (one indirect draw call, per-triangle record,\n"
 		"      vec4 coordiate attribute):               ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -2653,9 +2653,15 @@ static void generateCoordinates(float* vertices,uint32_t numTriangles,unsigned t
 
 	// Each iteration generates two triangles.
 	// triangleSize is dimension of square that is cut into the two triangles.
+	// When triangleSize is set to 2:
+	//    Both triangles together produce 4 pixels: the first triangle 3 pixel and
+	//    the second triangle 1 pixel. For more detail, see OpenGL rasterization rules.
 	// When triangleSize is set to 1:
-	//    Both triangles together produce 4 pixels: the first triangle 3 pixels and
-	//    the second triangle a single pixel. For more detail, see OpenGL rasterization rules.
+	//    Both triangles together produce 4 pixels: the first triangle 1 pixel and
+	//    the second triangle 0 pixels. For more detail, see OpenGL rasterization rules.
+	// When triangleSize is set to 0:
+	//    Both triangles together produce 4 pixels: the first triangle 0 pixels and
+	//    the second triangle 0 pixels. For more detail, see OpenGL rasterization rules.
 	for(float z=0.9f; z>0.01f; z-=0.01f) {
 		for(unsigned j=0; j<numLinesPerScreen; j++) {
 			for(unsigned i=0; i<numTrianglesPerLine; i+=2) {
@@ -2664,22 +2670,22 @@ static void generateCoordinates(float* vertices,uint32_t numTriangles,unsigned t
 				double y=j*stride;
 
 				// triangle 1, vertex 1
-				vertices[idx++]=float((x+0.5-0.1)*scaleX+offsetX);
-				vertices[idx++]=float((y+0.5-0.1)*scaleY+offsetY);
+				vertices[idx++]=float((x+0.4)*scaleX+offsetX);
+				vertices[idx++]=float((y+0.4)*scaleY+offsetY);
 				vertices[idx++]=z;
 				if(useVec4)
 					vertices[idx++]=1.f;
 
 				// triangle 1, vertex 2
-				vertices[idx++]=float((x+0.5+triangleSize-0.8)*scaleX+offsetX);
-				vertices[idx++]=float((y+0.5-0.1)*scaleY+offsetY);
+				vertices[idx++]=float((x-0.3+triangleSize)*scaleX+offsetX);
+				vertices[idx++]=float((y+0.4)*scaleY+offsetY);
 				vertices[idx++]=z;
 				if(useVec4)
 					vertices[idx++]=1.f;
 
 				// triangle 1, vertex 3
-				vertices[idx++]=float((x+0.5-0.1)*scaleX+offsetX);
-				vertices[idx++]=float((y+0.5+triangleSize-0.8)*scaleY+offsetY);
+				vertices[idx++]=float((x+0.4)*scaleX+offsetX);
+				vertices[idx++]=float((y-0.3+triangleSize)*scaleY+offsetY);
 				vertices[idx++]=z;
 				if(useVec4)
 					vertices[idx++]=1.f;
@@ -2688,22 +2694,22 @@ static void generateCoordinates(float* vertices,uint32_t numTriangles,unsigned t
 					return;
 
 				// triangle 2, vertex 1
-				vertices[idx++]=float((x+0.5+triangleSize+0.6)*scaleX+offsetX);
-				vertices[idx++]=float((y+0.5+1.3)*scaleY+offsetY);
+				vertices[idx++]=float((x+1.1+triangleSize)*scaleX+offsetX);
+				vertices[idx++]=float((y+1.7)*scaleY+offsetY);
 				vertices[idx++]=z;
 				if(useVec4)
 					vertices[idx++]=1.f;
 
 				// triangle 2, vertex 2
-				vertices[idx++]=float((x+0.5+1.3)*scaleX+offsetX);
-				vertices[idx++]=float((y+0.5+triangleSize+0.6)*scaleY+offsetY);
+				vertices[idx++]=float((x+1.7)*scaleX+offsetX);
+				vertices[idx++]=float((y+1.1+triangleSize)*scaleY+offsetY);
 				vertices[idx++]=z;
 				if(useVec4)
 					vertices[idx++]=1.f;
 
 				// triangle 2, vertex 3
-				vertices[idx++]=float((x+0.5+triangleSize+0.6)*scaleX+offsetX);
-				vertices[idx++]=float((y+0.5+triangleSize+0.6)*scaleY+offsetY);
+				vertices[idx++]=float((x+1.1+triangleSize)*scaleX+offsetX);
+				vertices[idx++]=float((y+1.1+triangleSize)*scaleY+offsetY);
 				vertices[idx++]=z;
 				if(useVec4)
 					vertices[idx++]=1.f;
