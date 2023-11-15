@@ -950,8 +950,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   One attribute performance, coordinates in vec4 attribute,\n"
-		"      one draw call:                           ",
+		"   One attribute performance - 1x vec4 attribute\n"
+		"      (attribute used, one draw call):         ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -963,8 +963,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   One buffer performance, coordinates in vec4 buffer,\n"
-		"      one draw call:                           ",
+		"   One buffer performance - 1x vec4 buffer\n"
+		"      (1x read in VS, one draw call):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -976,8 +976,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   One buffer performance, coordinates in vec3 buffer,\n"
-		"      one draw call:                           ",
+		"   One buffer performance - 1x vec3 buffer\n"
+		"      (1x read in VS, one draw call):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -989,8 +989,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Two attributes performance, 2x vec4 attribute,\n"
-		"      both attributes used:                    ",
+		"   Two attributes performance - 2x vec4 attribute\n"
+		"      (both attributes used):                  ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1002,8 +1002,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Two buffers performance, 2x vec4 buffer,\n"
-		"      both attributes used:                    ",
+		"   Two buffers performance - 2x vec4 buffer\n"
+		"      (both buffers read in VS):               ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1015,8 +1015,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Two buffers performance, 2x vec3 buffer,\n"
-		"      both attributes used:                    ",
+		"   Two buffers performance - 2x vec3 buffer\n"
+		"      (both buffers read in VS):               ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1028,9 +1028,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Two interleaved attributes performance,\n"
-		"      2x vec4 attribute fetched from the single buffer,\n"
-		"      both attributes used:                    ",
+		"   Two interleaved attributes performance - 2x vec4\n"
+		"      (2x vec4 attribute fetched from the single buffer,\n"
+		"      both attributes read in VS:              ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1042,9 +1042,9 @@ static void initTests()
 		}),
 			
 	Test(
-		"   Two interleaved buffers performance,\n"
-		"      2x vec4 buffers fetched from the single buffer,\n"
-		"      both buffers used:                       ",
+		"   Two interleaved buffers performance - 2x vec4\n"
+		"      (2x vec4 fetched from the single buffer\n"
+		"      in VS:                                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1056,8 +1056,7 @@ static void initTests()
 		}),
 
 	Test(
-		"   Interleaved packed buffer performance,\n"
-		"      1x buffer using 32-byte struct unpacked\n"
+		"   Packed buffer performance - 1x buffer using 32-byte struct unpacked\n"
 		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1070,9 +1069,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Packed attribute performance,\n"
-		"      2x uvec4 attribute unpacked into\n"
-		"      position+normal+color+texCoord:          ",
+		"   Packed attribute performance - 2x uvec4 attribute unpacked\n"
+		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1084,9 +1082,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Packed buffer performance,\n"
-		"      2x uvec4 buffers unpacked into\n"
-		"      position+normal+color+texCoord:          ",
+		"   Packed buffer performance - 2x uvec4 buffers unpacked\n"
+		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1098,9 +1095,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Packed buffer performance,\n"
-		"      2x buffer using 16-byte struct unpacked into\n"
-		"      position+normal+color+texCoord:          ",
+		"   Packed buffer performance - 2x buffer using 16-byte struct unpacked\n"
+		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1112,9 +1108,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Packed buffer performance, 2x buffer using 16-byte struct,\n"
-		"      accessed multiple times, unpacked into\n"
-		"      position+normal+color+texCoord:          ",
+		"   Packed buffer performance - 2x buffer using 16-byte struct\n"
+		"      read multiple times and unpacked\n"
+		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1126,8 +1122,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Four attributes performance,\n"
-		"      4x vec4f32 attributes:                   ",
+		"   Four attributes performance - 4x vec4 attribute\n"
+		"      (all attributes used):                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1140,8 +1136,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Four buffers performance, 4x vec4f32 buffers,\n"
-		"      all buffers used:                        ",
+		"   Four buffers performance - 4x vec4 buffer\n"
+		"      (all buffers read in VS):                ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1153,8 +1149,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   Four buffers performance, 4x vec3 buffers,\n"
-		"      all buffers used:                        ",
+		"   Four buffers performance - 4x vec3 buffer\n"
+		"      (all buffers read in VS):                ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1166,8 +1162,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Four interleaved attributes performance, 4x vec4f32\n"
-		"      fetched from the single buffer:          ",
+		"   Four interleaved attributes performance - 4x vec4\n"
+		"      (4x vec4 fetched from the single buffer\n"
+		"      in VS:                                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1179,9 +1176,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Four interleaved buffers performance,\n"
-		"      4x vec4f32 fetched from the single buffer,\n"
-		"      all attributes used:                     ",
+		"   Four interleaved buffers performance - 4x vec4\n"
+		"      (4x vec4 fetched from the single buffer\n"
+		"      in VS:                                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1193,9 +1190,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Four attributes performance, 4x attribute\n"
+		"   Four attributes performance - 2x vec4 and 2x R8G8B8A8 attribute\n"
 		"      (2x vec4f32 + 2x vec4u8, 2x conversion from vec4u8\n"
-		"      in memory to vec4 in VS):                ",
+		"      to vec4):                                ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2657,10 +2654,10 @@ static void generateCoordinates(float* vertices,uint32_t numTriangles,unsigned t
 	//    Both triangles together produce 4 pixels: the first triangle 3 pixel and
 	//    the second triangle 1 pixel. For more detail, see OpenGL rasterization rules.
 	// When triangleSize is set to 1:
-	//    Both triangles together produce 4 pixels: the first triangle 1 pixel and
+	//    Both triangles together produce 1 pixel: the first triangle 1 pixel and
 	//    the second triangle 0 pixels. For more detail, see OpenGL rasterization rules.
 	// When triangleSize is set to 0:
-	//    Both triangles together produce 4 pixels: the first triangle 0 pixels and
+	//    Both triangles together produce 0 pixels: the first triangle 0 pixels and
 	//    the second triangle 0 pixels. For more detail, see OpenGL rasterization rules.
 	for(float z=0.9f; z>0.01f; z-=0.01f) {
 		for(unsigned j=0; j<numLinesPerScreen; j++) {
