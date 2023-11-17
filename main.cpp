@@ -1205,8 +1205,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, one uniform Matrix for all triangles read\n"
-		"      by VS, coordinates in vec4 attribute:    ",
+		"   Matrix performance - one matrix as uniform for all triangles\n"
+		"      (maxtrix read in VS,\n"
+		"      coordinates in vec4 attribute):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1218,8 +1219,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, per-triangle Matrix in matrix buffer read\n"
-		"      by VS, coordinates in vec4 attribute:    ",
+		"   Matrix performance - per-triangle matrix in buffer\n"
+		"      (different matrix read for each triangle in VS,\n"
+		"      coordinates in vec4 attribute):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1231,9 +1233,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, per-triangle Matrix in attribute,\n"
-		"      coordinates in vec4 attribute, each triangle is instanced\n"
-		"      so it receives different matrix:         ",
+		"   Matrix performance - per-triangle matrix in attribute\n"
+		"      (triangles are instanced and each triangle receives a different matrix,\n"
+		"      coordinates in vec4 attribute:           ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1246,8 +1248,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, single non-changing Matrix in a buffer,\n"
-		"      two packed attributes:                   ",
+		"   Matrix performance - one matrix in buffer for all triangles and two packed\n"
+		"      attributes (each triangle reads matrix from the same place in a buffer,\n"
+		"      two packed attributes):                  ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1260,8 +1263,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, per-triangle Matrix in matrix buffer,\n"
-		"      two packed attributes:                   ",
+		"   Matrix performance - per-triangle matrix in buffer and two packed attributes\n"
+		"      (each triangle reads a different matrix from a buffer,\n"
+		"      two packed attributes):                  ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1273,8 +1277,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, per-triangle Matrix in matrix buffer,\n"
-		"      two packed buffers:                      ",
+		"   Matrix performance - per-triangle matrix in buffer and two packed buffers\n"
+		"      (each triangle reads a different matrix from a buffer,\n"
+		"      two packed buffers):                     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1286,9 +1291,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, geometry shader reading per-triangle matrix\n"
-		"      from matrix buffer, two packed buffers read by GS:\n"
-		"                                               ",
+		"   Matrix performance - GS reads per-triangle matrix from buffer and two packed\n"
+		"      buffers (each triangle reads a different matrix from a buffer,\n"
+		"      two packed buffers read by GS):          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1315,8 +1320,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, per-triangle matrix in matrix buffer,\n"
-		"      4x vec4f32 attributes:                   ",
+		"   Matrix performance - per-triangle matrix in buffer and four attributes\n"
+		"      (each triangle reads a different matrix from a buffer,\n"
+		"      4x vec4 attribute):                      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1329,10 +1335,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, three matrices, 2x uniform Matrix (mat4+mat4) +\n"
-		"      1x per-triangle matrix read from matrix buffer in VS,\n"
-		"      two packed attributes unpacked into positions+normals+\n"
-		"      color+texCoord:                          ",
+		"   Matrix performance - 1x per-triangle matrix in buffer, 2x uniform matrix and\n"
+		"      and two packed attributes (uniform view and projection matrices multiplied\n"
+		"      with per-triangle model matrix and with unpacked attributes of\n"
+		"      position, normal, color and texCoord:    ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1345,9 +1351,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, five matrices, 3x uniform Matrix (mat4+mat4+mat3) +\n"
-		"      2x per-triangle matrix read from matrix buffer (mat4+mat3)\n"
-		"      in VS, two packed attributes:            ",
+		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
+		"      3x uniform matrix (mat4+mat4+mat3) and two packed attributes\n"
+		"      (full position and normal computation with MVP and normal matrices,\n"
+		"      all matrices and attributes multiplied): ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1360,10 +1367,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, five matrices, 2x single non-changing Matrix in\n"
-		"      push constants (mat4+mat4) + 1x constant Matrix (mat3) +\n"
-		"      2x per-triangle Matrix read from matrix buffer (mat4+mat3)\n"
-		"      in VS, two packed attributes:            ",
+		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
+		"      2x non-changing matrix (mat4+mat4) in push constants,\n"
+		"      1x constant matrix (mat3) and two packed attributes (all\n"
+		"      matrices and attributes multiplied):     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1392,10 +1399,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, five matrices, 2x single non-changing Matrix using\n"
-		"      specialization constants (mat4+mat4) + 1x constant Matrix\n"
-		"      (mat3) + 2x per-triangle Matrix read from matrix buffer (mat4+\n"
-		"      mat3) in VS, two packed attributes:      ",
+		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
+		"      2x non-changing matrix (mat4+mat4) in specialization constants, 1x\n"
+		"      constant matrix (mat3) defined by VS code and two packed attributes (all\n"
+		"      matrices and attributes multiplied):     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1408,10 +1415,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, five matrices, 3x single non-changing Matrix defined\n"
-		"      by constants in VS code (mat4+mat4+mat3) +\n"
-		"      2x per-triangle Matrix read from matrix buffer (mat4+mat3),\n"
-		"      two packed attributes:                   ",
+		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
+		"      3x constant matrix (mat4+mat4+mat3) defined by VS code and\n"
+		"      two packed attributes (all matrices and attributes\n"
+		"      multiplied):                             ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1424,10 +1431,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, five matrices read in GS,\n"
-		"      3x uniform Matrix (mat4+mat4+mat3) + 2x per-triangle\n"
-		"      Matrix read from matrix buffer (mat4+mat3) in GS,\n"
-		"      2x packed attribute passed through VS:   ",
+		"   Matrix performance - GS five matrices processing, 2x per-triangle matrix\n"
+		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
+		"      2x packed attribute passed through VS (all matrices and attributes\n"
+		"      multiplied):                             ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1454,10 +1461,10 @@ static void initTests()
 		}),
 
 	Test(
-		"   Matrix performance, five matrices read in GS,\n"
-		"      3x uniform Matrix (mat4+mat4+mat3) + 2x per-triangle\n"
-		"      Matrix read from matrix buffer (mat4+mat3) in GS,\n"
-		"      2x packed data read from buffer in GS:   ",
+		"   Matrix performance - GS five matrices processing, 2x per-triangle matrix\n"
+		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
+		"      2x packed data read from buffer in GS (all matrices and attributes\n"
+		"      multiplied):                             ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{

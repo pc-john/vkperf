@@ -22,6 +22,12 @@ The list of tests follows:
 - [Interleaved buffer tests](#interleaved-buffer-tests)
 - [Packed data tests](#packed-data-tests)
 - [Attribute conversion test](#attribute-conversion-test)
+32. ... 46. [Matrix performance](#matrix-performance)
+- [Uniform vs buffer vs attribute matrix tests](#uniform-vs-buffer-vs-attribute-matrix-tests)
+- [Single whole scene matrix test](#single-whole-scene-matrix-test)
+- [Single per-triangle matrix tests](#single-per-triangle-matrix-tests)
+- [Three matrices test](#three-matrices-test)
+- [Five matrices tests](#five-matrices-tests)
 
 
 ## VS max throughput
@@ -699,4 +705,153 @@ array<const vk::VertexInputAttributeDescription,4>{  // pVertexAttributeDescript
 		0   // offset
 	),
 }.data()
+```
+
+
+## Matrix performance
+
+The matrix performance tests use one to five matrices in vertex or geometry shader.
+Matrices are sourced from uniform variable, buffer, attribute, shader constant or specialization constant.
+The matrices are either per-triangle or per-scene.
+Per-triangle matrices are sourced the matrix from a different memory location.
+Per-scene matrices are either constants, specialization constants or they are sourced from
+the same memory location by each shader invocation.
+
+The resulting triangle throughput is equivalent to the number of geometry shader invocations
+or three times more vertex shader invocations, depending on particular test.
+
+### Uniform vs buffer vs attribute matrix tests
+
+Three tests comparing performance of uniform matrix and per-triangle matrix sourced from buffer or attribute:
+
+- Matrix performance - one matrix as uniform for all triangles
+ 
+```c++
+layout(location=0) in vec4 inPosition;
+
+layout(binding=0) uniform UniformBufferObject {
+	mat4 modelView;
+};
+
+void main() {
+	gl_Position = modelView * inPosition;
+}
+```
+
+- Matrix performance - per-triangle matrix in buffer
+
+```c++
+layout(location=0) in vec4 inPosition;
+
+layout(std430,binding=0) restrict readonly buffer TransformationMatrix {
+	mat4 transformationMatrix[];
+};
+
+void main() {
+	gl_Position = transformationMatrix[gl_VertexIndex/3] * inPosition;
+}
+```
+
+- Matrix performance - per-triangle matrix in attribute
+
+```c++
+layout(location=0) in vec4 inPosition;
+layout(location=1) in mat4 transformationMatrix;
+
+void main() {
+	gl_Position = transformationMatrix * inPosition;
+}
+```
+
+### Single whole scene matrix test
+
+Name of the test:
+- Matrix performance - one matrix in buffer for all triangles and two packed attributes
+
+This test shows the performance benefit of using per-scene matrix
+over to per-triangle matrices used in the [following tests](#single-per-triangle-matrix-performance).
+
+```c++
+layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: float posZ, 3: half normalZ + half posW
+layout(location=1) in uvec4 packedData2;  // 0: float texU, 1: float texV, 2: half normalX + half normalY, 3: uint color
+
+layout(std430,binding=0) restrict readonly buffer TransformationMatrix {
+	mat4 transformationMatrix[];
+};
+
+void main() {
+	vec2 extra = unpackHalf2x16(packedData1.w);
+	vec4 position = vec4(uintBitsToFloat(packedData1.xyz), extra.y);
+	vec3 normal = vec3(unpackHalf2x16(packedData2.z), extra.x);
+	vec4 color = unpackUnorm4x8(packedData2.w);
+	vec2 texCoord = uintBitsToFloat(packedData2.xy);
+	gl_Position = transformationMatrix[0] * position * color * vec4(normal, 1) * vec4(texCoord, 1, 1);
+}
+```
+
+### Single per-triangle matrix tests
+
+Per-triangle matrix tests read a matrix from a buffer in vertex or geometry shader.
+It also processes two packed attributes or four not packed attributes.
+
+Such approach is used in the following tests:
+- Matrix performance - per-triangle matrix in buffer and two packed attributes
+- Matrix performance - per-triangle matrix in buffer and two packed buffers
+- Matrix performance - GS reads per-triangle matrix from buffer and two packed buffers
+- Matrix performance - per-triangle matrix in buffer and four attributes
+
+### Three matrices test
+
+Three matrices test represents a typical setup when only vertex positions are processed,
+or when normal matrices can be derived from view and model matrices.
+
+It is used in the following test:
+- Matrix performance - 1x per-triangle matrix in buffer, 2x uniform matrix and and two packed attributes
+
+### Five matrices tests
+
+Five matrices tests represent a typical setup when vertex positions and normals are processed.
+Positions utilize perspective, view and model matrix, e.g. 3x mat4.
+Normals need transposed inverse of view and model matrix, e.g. 2x mat3, unless further optimizations are deployed.
+
+This is used in the following tests:
+- Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and two packed attributes
+- Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer, 2x non-changing matrix in push constants (mat4+mat4), 1x constant matrix (mat3) and two packed attributes
+- Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer, 2x non-changing matrix (mat4+mat4) in specialization constants, 1x constant matrix (mat3) and two packed attributes
+- Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer, 3x constant matrix (mat4+mat4+mat3) defined by VS code and two packed attribute
+- Matrix performance - GS five matrices processing, 2x per-triangle matrix (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and 2x packed attribute passed through VS
+- Matrix performance - GS five matrices processing, 2x per-triangle matrix (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and 2x packed data read from buffer in GS
+
+All the tests are variations on the following shader code:
+```c++
+layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: float posZ, 3: half normalZ + half posW
+layout(location=1) in uvec4 packedData2;  // 0: float texU, 1: float texV, 2: half normalX + half normalY, 3: uint color
+
+layout(std430,binding=0) restrict readonly buffer TransformationMatrix {
+	mat4 transformationMatrix[];
+};
+
+layout(std430,binding=1) restrict readonly buffer NormalMatrix {
+	mat3 normalMatrix[];
+};
+
+layout(binding=2) uniform UniformBufferObject {
+	mat4 viewMatrix;
+	mat4 projectionMatrix;
+	mat3 normalViewMatrix;
+};
+
+out gl_PerVertex {
+	vec4 gl_Position;
+};
+
+void main() {
+	vec2 extra = unpackHalf2x16(packedData1.w);
+	vec4 position = vec4(uintBitsToFloat(packedData1.xyz), extra.y);
+	vec3 normal = vec3(unpackHalf2x16(packedData2.z), extra.x); 
+	vec4 color = unpackUnorm4x8(packedData2.w);
+	vec2 texCoord = uintBitsToFloat(packedData2.xy);
+	gl_Position = projectionMatrix * viewMatrix * transformationMatrix[gl_VertexIndex/3] * position *
+	              color * vec4(normalViewMatrix*normalMatrix[gl_VertexIndex/3]*normal, 1) * vec4(texCoord, 1, 1);
+}
 ```
