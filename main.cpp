@@ -938,6 +938,7 @@ static void initTests()
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
 			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
@@ -2199,6 +2200,7 @@ static void initTests()
 				case 2: cb.bindIndexBuffer(stripPrimitiveRestart4IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				default: assert(0 && "Unhandled triPerStrip parameter."); return;
 				};
 				beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2244,6 +2246,7 @@ static void initTests()
 				case 2: cb.bindIndexBuffer(stripPrimitiveRestart4IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				default: assert(0 && "Unhandled triPerStrip parameter."); return;
 				};
 				beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -9822,7 +9825,7 @@ int main(int argc,char** argv)
 			}
 
 		}
-	ExitMainLoop:
+
 		device->waitIdle();
 
 	// catch exceptions
