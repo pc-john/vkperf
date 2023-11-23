@@ -1013,7 +1013,7 @@ static void initTests()
 
 	Test(
 		"   VkDrawIndirectCommand processing throughput\n"
-		"      (one vkCmdDrawIndirect() call, per-triangle record,\n"
+		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1034,7 +1034,7 @@ static void initTests()
 
 	Test(
 		"   VkDrawIndirectCommand processing throughput with vec4 attribute\n"
-		"      (one vkCmdDrawIndirect() call, per-triangle record,\n"
+		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      vec4 coordiate attribute):               ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1054,7 +1054,7 @@ static void initTests()
 
 	Test((
 		"   VkDrawIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
-		"      (one vkCmdDrawIndirect() call, per-triangle record,\n"
+		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      attributeless):                          ").c_str(),
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1075,8 +1075,8 @@ static void initTests()
 
 	Test(
 		"   VkDrawIndexedIndirectCommand processing throughput\n"
-		"      (one vkCmdDrawIndexedIndirect() call, per-triangle record,\n"
-		"      attributeless):                          ",
+		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
+		"      call, attributeless):                    ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1097,8 +1097,8 @@ static void initTests()
 
 	Test(
 		"   VkDrawIndexedIndirectCommand processing throughput with vec4 attribute\n"
-		"      (one vkCmdDrawIndexedIndirect() call, per-triangle record,\n"
-		"      vec4 coordiate attribute):               ",
+		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
+		"      call, vec4 coordiate attribute):         ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1118,8 +1118,8 @@ static void initTests()
 
 	Test((
 		"   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
-		"      (one vkCmdDrawIndexedIndirect() call, per-triangle record,\n"
-		"      attributeless):                          ").c_str(),
+		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
+		"      call, attributeless):                    ").c_str(),
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2670,13 +2670,12 @@ static void initTests()
 	else if(longTest)
 		transferSizeList = { 4, 4, 8, 16, 32, 64, 128, 256, 512, 1024,
 		                     2048, 4096, 8192, 16384, 32768, 65536,
-		                     131072, 262144, 524288, 1048576,
-		                     2097152, 4194304 };
+		                     131072, 262144 };
 	else
-		transferSizeList = { 4, 32, 256, 2048, 1048576 };
+		transferSizeList = { 4, 32, 256, 2048, 65536 };
 
 	const char* consecutiveTransfersText =
-		"   Transfer of consecutive blocks while changing block size:";
+		"   Transfer of consecutive blocks:";
 	for(uint32_t n : transferSizeList)
 	{
 		tests.emplace_back(
@@ -2690,11 +2689,11 @@ static void initTests()
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t transferSize)
 			{
 				// compute numTranfers
-				// (numTransfers is limited to 1/8 of the buffer size because of some strange driver problem
-				// on Intel(R) UHD Graphics 630 (i7-10750H), driver version 30.0.101.1338, driver date: 2022-01-20)
-				size_t numTransfers = (minimalTest) ? 10 : size_t(4e6) / transferSize;
-				if(numTransfers*transferSize*8 > sameDMatrixStagingBufferSize)
-					numTransfers = sameDMatrixStagingBufferSize / transferSize / 8;
+				size_t numTransfers = size_t(262144) / transferSize;
+				if(minimalTest && numTransfers > 10)
+					numTransfers = 10;
+				if(sameDMatrixStagingBufferSize < 262144)
+					numTransfers = sameDMatrixStagingBufferSize / transferSize;
 
 				// enable TransferThroughput tests only on each fourth measurement
 				// because they are usually very time consuming
@@ -2741,7 +2740,7 @@ static void initTests()
 	}
 
 	const char* spacedTransfersText =
-		"   Transfer of spaced blocks while changing block and space size:";
+		"   Transfer of spaced blocks:";
 	for(uint32_t n : transferSizeList)
 	{
 		tests.emplace_back(
@@ -2755,11 +2754,11 @@ static void initTests()
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t transferSize)
 			{
 				// compute numTranfers
-				// (numTransfers is limited to 1/8 of the buffer size because of some strange driver problem
-				// on Intel(R) UHD Graphics 630 (i7-10750H), driver version 30.0.101.1338, driver date: 2022-01-20)
-				size_t numTransfers = (minimalTest) ? 10 : size_t(4e6) / transferSize;
-				if(numTransfers*transferSize*2*8 > sameDMatrixStagingBufferSize)
-					numTransfers = sameDMatrixStagingBufferSize / transferSize / 2 / 8;
+				size_t numTransfers = size_t(262144) / transferSize;
+				if(minimalTest && numTransfers > 10)
+					numTransfers = 10;
+				if(sameDMatrixStagingBufferSize < 262144*2)
+					numTransfers = sameDMatrixStagingBufferSize / transferSize / 2;
 
 				// enable TransferThroughput tests only on each fourth measurement
 				// because they are usually very time consuming
