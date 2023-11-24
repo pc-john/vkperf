@@ -25,6 +25,7 @@ static constexpr const double longTestTime = 60.;
 static constexpr const double standardTestTime = 2.;
 static constexpr const uint32_t numTrianglesStandard = uint32_t(1*1e6);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(1*1e5);
+static constexpr const uint32_t numTrianglesCpu = uint32_t(1*1e4);
 static constexpr const uint32_t indirectRecordStride = 32;
 
 
@@ -887,7 +888,7 @@ static void initTests()
 
 	Test(
 		"   Instancing throughput of vkCmdDraw()\n"
-		"      (single triangle instanced, constant VS output, one draw call,\n"
+		"      (one triangle per instance, constant VS output, one draw call,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -901,7 +902,7 @@ static void initTests()
 
 	Test(
 		"   Instancing throughput of vkCmdDrawIndexed()\n"
-		"      (single triangle instanced, constant VS output, one draw call,\n"
+		"      (one triangle per instance, constant VS output, one draw call,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -916,7 +917,7 @@ static void initTests()
 
 	Test(
 		"   Instancing throughput of vkCmdDrawIndirect()\n"
-		"      (single triangle instanced, one indirect draw call,\n"
+		"      (one triangle per instance, one indirect draw call,\n"
 		"      one indirect record, attributeless:      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -933,7 +934,7 @@ static void initTests()
 
 	Test(
 		"   Instancing throughput of vkCmdDrawIndexedIndirect()\n"
-		"      (single triangle instanced, one indirect draw call,\n"
+		"      (one triangle per instance, one indirect draw call,\n"
 		"      one indirect record, attributeless:      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -3598,8 +3599,12 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 			numTriangles = numTrianglesStandard/20;
 		else
 			numTriangles = numTrianglesStandard/50;
+
+		// put further limits on integrated and cpu-emulated devices
 		if(physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eIntegratedGpu)
 			numTriangles = min(numTriangles, numTrianglesIntegratedGpu);
+		else if(physicalDeviceProperties.deviceType == vk::PhysicalDeviceType::eCpu)
+			numTriangles = min(numTriangles, numTrianglesCpu);
 	}
 	cout << "Number of triangles for tests:  " << numTriangles << endl;
 
