@@ -746,7 +746,7 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS max throughput (one draw call, attributeless,\n"
+		"   VS max throughput (single vkCmdDraw() call, attributeless,\n"
 		"      constant VS output):                     ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -759,7 +759,7 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS max throughput on indexed draw call (one indexed draw call,\n"
+		"   VS max throughput using indexed draw call (single vkCmdDrawIndexed() call,\n"
 		"      monotonically increasing indices, attributeless,\n"
 		"      constant VS output):                     ",
 		Test::Type::VertexThroughput,
@@ -775,7 +775,7 @@ static void initTests()
 
 	Test(
 		"   VS VertexIndex and InstanceIndex forming output\n"
-		"      (one draw call, attributeless):          ",
+		"      (one vkCmdDraw() call, attributeless):   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -787,8 +787,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS VertexIndex and InstanceIndex forming output during indexed draw call\n"
-		"      (one indexed draw call, monotonically increasing indices,\n"
+		"   VS VertexIndex and InstanceIndex forming output using indexed draw call\n"
+		"      (one vkCmdDrawIndexed() call, monotonically increasing indices,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -981,6 +981,7 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}),
 
+#if 0 // the tests are probably not needed
 	Test(
 		"   Draw command throughput with vec4 attribute\n"
 		"      (per-triangle vkCmdDraw() in command buffer,\n"
@@ -1011,6 +1012,7 @@ static void initTests()
 				cb.drawIndexed(3, 1, i*3, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
 		}),
+#endif
 
 	Test(
 		"   VkDrawIndirectCommand processing throughput\n"
@@ -1033,6 +1035,7 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}),
 
+#if 0 // the test is probably not needed
 	Test(
 		"   VkDrawIndirectCommand processing throughput with vec4 attribute\n"
 		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
@@ -1052,6 +1055,7 @@ static void initTests()
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
 		}),
+#endif
 
 	Test((
 		"   VkDrawIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
@@ -1096,6 +1100,7 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}),
 
+#if 0 // the test is probably not needed
 	Test(
 		"   VkDrawIndexedIndirectCommand processing throughput with vec4 attribute\n"
 		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
@@ -1116,6 +1121,7 @@ static void initTests()
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
 		}),
+#endif
 
 	Test((
 		"   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"

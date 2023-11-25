@@ -5,29 +5,41 @@ The tests are described in detail in this file.
 
 The list of tests follows:
 1. [VS max throughput](#vs-max-throughput)
-2. [VS VertexIndex and InstanceIndex forming output](#vs-vertexindex-and-instanceindex-forming-output)
-3. [GS max throughput when no output is produced](#gs-max-throughput-when-no-output-is-produced)
-4. [GS max throughput when single constant triangle is produced](#gs-max-throughput-when-single-constant-triangle-is-produced)
-5. [GS max throughput when two constant triangles are produced](#gs-max-throughput-when-two-constant-triangles-are-produced)
-6. [Instancing throughput of vkCmdDraw()](#instancing-throughput-of-vkcmddraw)
-7. [Instancing throughput of vkCmdDrawIndirect()](#instancing-throughput-of-vkcmddrawindirect)
-8. [Draw command throughput](#draw-command-throughput)
-9. [Draw command throughput with vec4 attribute](#draw-command-throughput-with-vec4-attribute)
-10. [Indirect command processing throughput](#indirect-command-processing-throughput)
-11. [Indirect command processing throughput with vec4 attribute](#indirect-command-processing-throughput-with-vec4-attribute)
-12. ... 31. [Attribute and buffer performance](#attribute-and-buffer-performance)
+2. [VS max throughput using indexed draw call](#vs-max-throughput-using-indexed-draw-call)
+3. [VS VertexIndex and InstanceIndex forming output](#vs-vertexindex-and-instanceindex-forming-output)
+4. [VS VertexIndex and InstanceIndex forming output using indexed draw call](#vs-vertexindex-and-instanceindex-forming-output-using-indexed-draw-call)
+5. [GS max throughput when no output is produced](#gs-max-throughput-when-no-output-is-produced)
+6. [GS max throughput when single constant triangle is produced](#gs-max-throughput-when-single-constant-triangle-is-produced)
+7. [GS max throughput when two constant triangles are produced](#gs-max-throughput-when-two-constant-triangles-are-produced)
+8. [Instancing throughput of vkCmdDraw()](#instancing-throughput-of-vkcmddraw)
+9. [Instancing throughput of vkCmdDrawIndexed()](#instancing-throughput-of-vkcmddrawindexed)
+10. [Instancing throughput of vkCmdDrawIndirect()](#instancing-throughput-of-vkcmddrawindirect)
+11. [Instancing throughput of vkCmdDrawIndexedIndirect()](#instancing-throughput-of-vkcmddrawindexedindirect)
+12. [Draw command throughput](#draw-command-throughput)
+13. [Draw indexed command throughput](#draw-indexed-command-throughput)
+14. [VkDrawIndirectCommand processing throughput](#vkdrawindirectcommand-processing-throughput)
+15. [VkDrawIndirectCommand processing throughput with stride](#vkdrawindirectcommand-processing-throughput-with-stride)
+16. [VkDrawIndexedIndirectCommand processing throughput](#vkdrawindexedindirectcommand-processing-throughput)
+17. [VkDrawIndexedIndirectCommand processing throughput with stride](#vkdrawindexedindirectcommand-processing-throughput-with-stride)
+18. ... 36. [Attribute and buffer performance](#attribute-and-buffer-performance)
 - [Attribute tests](#attribute-tests)
 - [Buffer tests](#buffer-tests)
 - [Interleaved attribute tests](#interleaved-attribute-tests)
 - [Interleaved buffer tests](#interleaved-buffer-tests)
 - [Packed data tests](#packed-data-tests)
 - [Attribute conversion test](#attribute-conversion-test)
-32. ... 46. [Matrix performance](#matrix-performance)
+37. ... 51. [Matrix performance](#matrix-performance)
 - [Uniform vs buffer vs attribute matrix tests](#uniform-vs-buffer-vs-attribute-matrix-tests)
 - [Single whole scene matrix test](#single-whole-scene-matrix-test)
 - [Single per-triangle matrix tests](#single-per-triangle-matrix-tests)
 - [Three matrices test](#three-matrices-test)
 - [Five matrices tests](#five-matrices-tests)
+52. ... 69. [Textured Phong performance](#textured-phong-performance)
+- [Textured Phong, matrices and four attributes](#textured-phong-matrices-and-four-attributes)
+- [Textured Phong, matrices and packed attributes](#textured-phong-matrices-and-packed-attributes)
+- [Textured Phong and PAT performance](#textured-phong-and-pat-performance)
+- [Textured Phong, PAT, indexed rendering and primitive restart](#textured-phong-pat-indexed-rendering-and-primitive-restart)
+- [Textured Phong and double precision matrix performance](#textured-phong-and-double-precision-matrix-performance)
 
 
 ## VS max throughput
@@ -35,7 +47,7 @@ The list of tests follows:
 Vertex shader maximum throughput test measures number of triangles per second that particular Vulkan device can render.
 To get vertex throughput, multiply the result by 3.
 
-The test uses simple vertex shader with constant output. Thus, zero size triangle is produced.
+The test uses simple vertex shader with constant output. Thus, zero size triangles are produced.
 The shader's main() code is as follows:
 
 ```c++
@@ -44,7 +56,7 @@ void main() {
 }
 ```
 
-Rendering is performed using single draw call for the whole scene:
+Rendering of the whole scene is performed by a single draw call:
 
 ```c++
 vkCmdDraw(
@@ -57,10 +69,27 @@ vkCmdDraw(
 ```
 
 
+## VS max throughput using indexed draw call
+
+The test is the same as the [previous test](#vs-max-throughput) except
+that it uses indexed draw call:
+
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	3*numberOfTriangles,  // indexCount
+	1,  // instanceCount
+	0,  // firstIndex
+	0,  // vertexOffset
+	0   // firstInstance
+);
+```
+
+
 ## VS VertexIndex and InstanceIndex forming output
 
-Vertex shader maximum throughput test uses simple shader that utilizes gl_VertexIndex and gl_InstanceIndex input variables.
-No attributes, buffers, descriptor sets, push constants or specialization constants are used:
+The test measures vertex shader throughput with gl_VertexIndex and gl_InstanceIndex 
+overhead:
 
 ```c++
 void main() {
@@ -68,7 +97,7 @@ void main() {
 }
 ```
 
-Rendering is performed using single draw call for the whole scene:
+Rendering of the whole scene is performed by a single draw call:
 
 ```c++
 vkCmdDraw(
@@ -76,6 +105,23 @@ vkCmdDraw(
 	3*numberOfTriangles,  // vertexCount
 	1,  // instanceCount
 	0,  // firstVertex
+	0   // firstInstance
+);
+```
+
+
+## VS VertexIndex and InstanceIndex forming output using indexed draw call
+
+The test is the same as the [previous test](#vs-vertexindex-and-instanceindex-forming-output)
+except that it uses indexed draw call:
+
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	3*numberOfTriangles,  // indexCount
+	1,  // instanceCount
+	0,  // firstIndex
+	0,  // vertexOffset
 	0   // firstInstance
 );
 ```
@@ -99,7 +145,7 @@ void main() {
 }
 ```
 
-Rendering is performed using single draw call for the whole scene:
+Rendering of the whole scene is performed by a single draw call:
 
 ```c++
 vkCmdDraw(
@@ -114,94 +160,62 @@ vkCmdDraw(
 
 ## GS max throughput when single constant triangle is produced
 
-Geometry shader maximum throughput test uses the following geometry shader to produce single constant triangle:
+The test uses the following geometry shader to produce single constant triangle:
 
 ```c++
 layout(triangles) in;
 layout(triangle_strip,max_vertices=3) out;
 void main() {
-	gl_Position=vec4(0,0,0.5,1);
+	gl_Position = vec4(0, 0, 0.5, 1);
 	EmitVertex();
-	gl_Position=vec4(0,0,0.6,1);
+	gl_Position = vec4(0, 0, 0.6, 1);
 	EmitVertex();
-	gl_Position=vec4(0,1e-10,0.4,1);
+	gl_Position = vec4(0, 1e-10, 0.4, 1);
 	EmitVertex();
 }
 ```
 
-It is fed by empty vertex shader:
-
-```c++
-void main() {
-}
-```
-
-Rendering is performed using single draw call for the whole scene:
-
-```c++
-vkCmdDraw(
-	commandBuffer,
-	3*numberOfTriangles,  // vertexCount
-	1,  // instanceCount
-	0,  // firstVertex
-	0   // firstInstance
-);
-```
+It uses empty vertex shader and single vkCmdDraw() call
+as in the [previous test](#gs-max-throughput-when-no-output-is-produced)
 
 
 ## GS max throughput when two constant triangles are produced
 
-Geometry shader maximum throughput test uses the following geometry shader to produce two constant triangles:
+The test uses the following geometry shader to produce two constant triangles:
 
 ```c++
 layout(triangles) in;
 layout(triangle_strip,max_vertices=6) out;
 void main() {
-	gl_Position=vec4(0,0,0.5,1);
+	gl_Position = vec4(0, 0, 0.5, 1);
 	EmitVertex();
-	gl_Position=vec4(0,0,0.6,1);
+	gl_Position = vec4(0, 0, 0.6, 1);
 	EmitVertex();
-	gl_Position=vec4(0,1e-10,0.4,1);
+	gl_Position = vec4(0, 1e-10, 0.4, 1);
 	EmitVertex();
 	EndPrimitive();
-	gl_Position=vec4(0,0,0.7,1);
+	gl_Position = vec4(0, 0, 0.7, 1);
 	EmitVertex();
-	gl_Position=vec4(0,0,0.8,1);
+	gl_Position = vec4(0, 0, 0.8, 1);
 	EmitVertex();
-	gl_Position=vec4(0,1e-10,0.9,1);
+	gl_Position = vec4(0, 1e-10, 0.9, 1);
 	EmitVertex();
 }
 ```
 
-The geometry shader is fed by empty vertex shader:
-
-```c++
-void main() {
-}
-```
-
-Rendering is performed using single draw call for the whole scene:
-
-```c++
-vkCmdDraw(
-	commandBuffer,
-	3*numberOfTriangles,  // vertexCount
-	1,  // instanceCount
-	0,  // firstVertex
-	0   // firstInstance
-);
-```
+It uses empty vertex shader and single vkCmdDraw() call
+as in the [previous two tests](#gs-max-throughput-when-no-output-is-produced)
 
 
 ## Instancing throughput of vkCmdDraw()
 
 Instancing throughput test measures instancing performance, e.g. number of instances per second
-that particular Vulkan device can render.
+that particular Vulkan device can process.
 
-The test uses single triangle instanced very many times. Thus, the measured number
-of rendered triangles is equal to the number of rendered instances. 
+The test uses single triangle instanced very many times.
+Thus, the triangle throughput is equal to instance throughput.
 
-The whole scene is rendered using single vkCmdDraw() call:
+The whole scene is rendered using a single vkCmdDraw() call:
 
 ```c++
 vkCmdDraw(
@@ -210,15 +224,32 @@ vkCmdDraw(
 	numberOfTriangles,  // instanceCount
 	0,  // firstVertex
 	0   // firstInstance
-);  // vertexCount, instanceCount, firstVertex, firstInstance
+);
 ```
 
-The vertex shader in outputs constant coordinates, thus producing zero-sized triangles:
+The vertex shader outputs constant coordinates, thus producing zero-sized triangles:
 
 ```c++
 void main() {
 	gl_Position = vec4(0, 0, 0.5, 1);
 }
+```
+
+
+## Instancing throughput of vkCmdDrawIndexed()
+
+The test is the same as the [previous test](#instancing-throughput-of-vkcmddraw)
+except that it uses indexed draw call:
+
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	3,  // indexCount
+	numberOfTriangles,  // instanceCount
+	0,  // firstIndex
+	0,  // vertexOffset
+	0   // firstInstance
+);
 ```
 
 
@@ -234,10 +265,11 @@ indirectBufferPtr->firstVertex = 0;
 indirectBufferPtr->firstInstance = 0;
 ```
 
-The VkDrawIndirectCommand structure is processed by vkCmdDrawIndirect() call:
+The VkDrawIndirectCommand structure is processed by a single vkCmdDrawIndirect() call:
 
 ```c++
 vkCmdDrawIndirect(
+	commandBuffer,
 	indirectBuffer,  // buffer
 	0,  // offset
 	1,  // drawCount
@@ -245,7 +277,7 @@ vkCmdDrawIndirect(
 );
 ```
 
-The vertex shader in use outputs constant coordinates, thus producing zero-sized triangles:
+The vertex shader outputs constant coordinates, thus producing zero-sized triangles:
 
 ```c++
 void main() {
@@ -254,11 +286,27 @@ void main() {
 ```
 
 
+## Instancing throughput of vkCmdDrawIndexedIndirect()
+
+The test is the same as the [previous test](#instancing-throughput-of-vkcmddrawindirect)
+except that it uses indexed draw call:
+
+```c++
+vkCmdDrawIndexedIndirect(
+	commandBuffer,
+	indirectBuffer,  // buffer
+	0,  // offset
+	1,  // drawCount
+	sizeof(VkDrawIndexedIndirectCommand)  // stride
+);
+```
+
+
 ## Draw command throughput
 
 Draw command throughput test measures performance of vkCmdDraw().
-Each draw call renders single triangle. Thus, triangle rendering performance is equal
-to the draw call performance in this test.
+Each draw call renders single triangle.
+Thus, triangle throughput is equal to vkCmdDraw() throughput.
 
 Draw code is equal to the following one:
 
@@ -268,12 +316,12 @@ for(uint32_t i=0; i<numberOfTriangles; i++)
 		commandBuffer,
 		3,  // vertexCount
 		1,  // instanceCount
-		3*numberOfTriangles,  // firstVertex
+		3*i,  // firstVertex
 		0   // firstInstance
 	);
 ```
 
-The vertex shader in use outputs constant coordinates, thus producing zero-sized triangles:
+The vertex shader outputs constant coordinates, thus producing zero-sized triangles:
 
 ```c++
 void main() {
@@ -282,37 +330,40 @@ void main() {
 ```
 
 
-## Draw command throughput with vec4 attribute
+## Draw indexed command throughput
 
-Draw command throughput test with vec4 attribute is equal to [the previous test](#draw-command-throughput)
-except that it uses position attribute in vertex shader:
+The test is the same as the [previous test](#draw-command-throughput)
+except that it uses indexed draw call:
 
 ```c++
-layout(location=0) in vec4 inPosition;
-void main() {
-	gl_Position = inPosition;
-}
+for(uint32_t i=0; i<numberOfTriangles; i++)
+	vkCmdDrawIndexed(
+		commandBuffer,
+		3,  // indexCount
+		1,  // instanceCount
+		3*i,  // firstIndex
+		0,  // vertexOffset
+		0   // firstInstance
+	);
 ```
 
-Vec4 coordinates are provided in a way to not produce any fragments in the rasterizer.
-They are tiny triangles in between pixel sampling locations distributed roughly across the whole screen.
 
+## VkDrawIndirectCommand processing throughput
 
-## Indirect command processing throughput
-
-Indirect command processing throughput test measures the number of VkDrawIndirectCommand
-processed per second. Each VkDrawIndirectCommand contains single triangle,
-thus number of processed triangles is equal to the number of processed
-VkDrawIndirectCommand structures. The content of VkDrawIndirectCommand is as follows:
+VkDrawIndirectCommand processing throughput test measures
+the number of VkDrawIndirectCommand structures processed per second.
+Each VkDrawIndirectCommand contains single triangle,
+thus triangle throughput is equal to VkDrawIndirectCommand processing throughput.
+The content of VkDrawIndirectCommand is as follows:
 
 ```c++
 indirectBufferPtr[i].vertexCount = 3;
 indirectBufferPtr[i].instanceCount = 1;
-indirectBufferPtr[i].firstVertex = i * 3;
+indirectBufferPtr[i].firstVertex = indexOfTriangle * 3;
 indirectBufferPtr[i].firstInstance = 0;
 ```
 
-The vertex shader in use outputs constant coordinates, thus producing zero-sized triangles:
+The vertex shader outputs constant coordinates, thus producing zero-sized triangles:
 
 ```c++
 void main() {
@@ -333,32 +384,92 @@ vkCmdDrawIndirect(
 ```
 
 
-## Indirect command processing throughput with vec4 attribute
+## VkDrawIndirectCommand processing throughput with stride
 
-Indirect command processing throughput test with vec4 attribute is equal to
-[the previous test](#indirect-command-processing-throughput)
-except that it uses position attribute in vertex shader:
+The test is the same as the [previous test](#vkdrawindirectcommand-processing-throughput)
+except that it uses greater stride value:
 
 ```c++
-layout(location=0) in vec4 inPosition;
+vkCmdDrawIndirect(
+	commandBuffer,
+	indirectBuffer.get(),  // buffer
+	0,  // offset
+	numTriangles,  // drawCount
+	32  // stride
+);
+```
+
+
+## VkDrawIndexedIndirectCommand processing throughput
+
+VkDrawIndexedIndirectCommand processing throughput test measures
+the number of VkDrawIndexedIndirectCommand structures processed per second.
+Each VkDrawIndexedIndirectCommand contains single triangle,
+thus triangle throughput is equal to VkDrawIndexedIndirectCommand processing throughput.
+The content of VkDrawIndexedIndirectCommand is as follows:
+
+```c++
+indirectIndexedBufferPtr[i].indexCount = 3;
+indirectIndexedBufferPtr[i].instanceCount = 1;
+indirectIndexedBufferPtr[i].firstIndex = indexOfTriangle * 3;
+indirectIndexedBufferPtr[i].vertexOffset = 0;
+indirectIndexedBufferPtr[i].firstInstance = 0;
+```
+
+The vertex shader outputs constant coordinates, thus producing zero-sized triangles:
+
+```c++
 void main() {
-	gl_Position = inPosition;
+	gl_Position = vec4(0, 0, 0.5, 1);
 }
 ```
 
-Vec4 coordinates are provided in a way to not produce any fragments in the rasterizer.
-They are tiny triangles in between pixel sampling locations distributed roughly across the whole screen.
+The rendering command is as follows:
+
+```c++
+vkCmdDrawIndexedIndirect(
+	commandBuffer,
+	indirectIndexedBuffer.get(),  // buffer
+	0,  // offset
+	numTriangles,  // drawCount
+	sizeof(VkDrawIndexedIndirectCommand)  // stride
+);
+```
+
+
+## VkDrawIndexedIndirectCommand processing throughput with stride
+
+The test is the same as the [previous test](#vkdrawindexedindirectcommand-processing-throughput)
+except that it uses greater stride value:
+
+```c++
+vkCmdDrawIndexedIndirect(
+	commandBuffer,
+	indirectIndexedBuffer.get(),  // buffer
+	0,  // offset
+	numTriangles,  // drawCount
+	32  // stride
+);
+```
 
 
 ## Attribute and buffer performance
 
-All these tests measure triangle rendering performance while using one to four attributes or buffers
-in vertex shader.
+All the tests in this section measure triangle rendering performance while using
+one to four attributes or buffers in vertex shader.
+
+The tests in this section might answer the questions like:
+- whether attributes or buffers are the faster option,
+- what is the impact of number of attributes on the performance,
+- how vec3 for vertex positions competes with the performance of vec4 vertex positions,
+- whether interleaved attributes or continuous buffer data of more than 16 bytes are fast options,
+- whether packing data to minimize vertex shader memory bandwidth is worthwhile.
 
 
 ### Attribute tests
 
-For attribute tests, vertex shader looks like:
+For attribute tests, the performance of one to four vec4 attributes is measured.
+The vertex shader looks like:
 
 ```c++
 layout(location=0) in vec4 inPosition;
@@ -374,8 +485,9 @@ void main() {
 Depending on the number of attributes, the shader code differs slightly.
 However, sum of all attributes except inPosition is made in a way to always be 0,0,0,0.
 Thus, just inPosition affects the resulting vertex position.
-Its values specify tiny triangles in between pixel sampling locations distributed roughly
-across the whole screen. So, they do not produce any fragments in the rasterizer.
+The values of inPosition specify tiny triangles in between pixel sampling locations
+distributed roughly across the whole framebuffer.
+So, they do not produce any fragments in the rasterizer.
 
 This is used in the following tests:
 - One attribute performance - 1x vec4 attribute
@@ -385,7 +497,8 @@ This is used in the following tests:
 
 ### Buffer tests
 
-For buffer tests, vertex shader looks like:
+For buffer tests, the performance of one to four vec4 buffers is measured.
+The vertex shader looks like:
 
 ```c++
 layout(std430,binding=0) restrict readonly buffer CoordinateBuffer {
@@ -400,6 +513,7 @@ layout(std430,binding=0) restrict readonly buffer CoordinateBuffer {
 [layout(std430,binding=3) restrict readonly buffer Data3Buffer {
 	vec4 data3[]; // contains vec4(4,4,4,4)
 };]
+
 void main() {
 	gl_Position = coordinateBuffer[gl_VertexIndex] [+data1[gl_VertexIndex]]
 	              [+data2[gl_VertexIndex]] [+data3[gl_VertexIndex]];
@@ -409,8 +523,9 @@ void main() {
 Depending on the number of buffers, the shader code differs slightly.
 However, sum of all buffers except coordinateBuffer is made in a way to always be 0,0,0,0.
 Thus, just coordinateBuffer affects the resulting vertex position.
-Its values specify tiny triangles in between pixel sampling locations distributed roughly
-across the whole screen. So, they do not produce any fragments in the rasterizer.
+The values in coordinateBuffer specify tiny triangles in between pixel sampling locations
+distributed roughly across the whole framebuffer.
+So, they do not produce any fragments in the rasterizer.
 
 This is used in the following tests:
 - One buffer performance - 1x vec4 buffer
@@ -423,8 +538,8 @@ This is used in the following tests:
 
 ### Interleaved attribute tests
 
-Interleaved attribute tests are using vertex input state that points all attributes to the same buffer.
-All attributes for particular vertex are stored on the consecutive places in the same buffer:
+Interleaved attribute tests are using vertex input state that points all attributes
+to the consecutive places in the same buffer:
 
 ```c++
 vk::PipelineVertexInputStateCreateInfo{
@@ -477,8 +592,8 @@ This is used in the following tests:
 ### Interleaved buffer tests
 
 Interleaved buffer tests are using vertex shaders
-that read various amount of interleaved data from the same buffer.
-All the data for particular vertex are stored on the consecutive places in the same buffer.
+that read various amount of interleaved data from
+the consecutive places in the same buffer.
 
 ```c++
 struct VertexData {
@@ -499,8 +614,8 @@ void main() {
 ```
 
 Vertex shader produces tiny triangles in between pixel sampling locations
-distributed roughly across the whole screen.
-They do not produce any fragments in the rasterizer.
+distributed roughly across the whole framebuffer.
+So, they do not produce any fragments in the rasterizer.
 
 This is used in the following tests:
 - Two interleaved buffers performance - 2x vec4
@@ -509,23 +624,23 @@ This is used in the following tests:
 
 ### Packed data tests
 
-These tests use one or two buffers which are unpacked into four attributes.
+These tests use one or two uvec4 buffers which are unpacked into four attributes.
 
 The first buffer typically contains x, y, and z coordinates as 4-byte floats.
-The last four bytes are occupied by w coordinate and normal's z component,
-both stored as half floats.
+The fourth component is usually occupied
+by two half floats - w coordinate and normal's z component.
 
 The second buffer typically contains texture u and v coordinates stored
 as 4-byte floats, normal's x and y component stored as half floats,
 and color stored as uint.
 
 The unpacked data produce tiny triangles in between pixel sampling locations
-distributed roughly across the whole screen.
-They do not produce any fragments in the rasterizer.
+distributed roughly across the whole framebuffer.
+So, they do not produce any fragments in the rasterizer.
 
 #### Packed attribute performance - 2x uvec4 attribute unpacked
 
-Packed attribute test uses two uvec4 attributes that are unpacked to four attributes:
+The test uses two uvec4 attributes that are unpacked to four attributes:
 
 ```c++
 layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: float posZ, 3: half normalZ + half posW
@@ -541,11 +656,11 @@ void main() {
 }
 ```
 
-More details can be found in [Packed data tests](#packed-data-tests) section.
+More details about packed data can be found in [Packed data tests](#packed-data-tests) section.
 
 #### Packed buffer performance - 1x buffer using 32-byte struct unpacked
 
-Single packed buffer uses 32-byte struct stored in one buffer
+The test uses 32-byte struct stored in one buffer
 that is unpacked into four attributes:
 
 ```c++
@@ -571,11 +686,11 @@ void main() {
 }
 ```
 
-More details can be found in [Packed data tests](#packed-data-tests) section.
+More details about packed data can be found in [Packed data tests](#packed-data-tests) section.
 
 #### Packed buffer performance - 2x uvec4 buffers unpacked
 
-Packed buffer test uses two uvec4 buffers that are unpacked into four attributes:
+The test uses two uvec4 buffers that are unpacked into four attributes:
 
 ```c++
 layout(std430,binding=0) restrict readonly buffer PackedDataBuffer1 {
@@ -597,11 +712,11 @@ void main() {
 }
 ```
 
-More details can be found in [Packed data tests](#packed-data-tests) section.
+More details about packed data can be found in [Packed data tests](#packed-data-tests) section.
 
 #### Packed buffer performance - 2x buffer using 16-byte struct unpacked
 
-Packed buffer test uses two structs stored in two buffers that are unpacked into four attributes:
+The test uses two structs stored in two buffers that are unpacked into four attributes:
 
 ```c++
 struct PackedData1 {
@@ -632,11 +747,11 @@ void main() {
 }
 ```
 
-More details can be found in [Packed data tests](#packed-data-tests) section.
+More details about packed data can be found in [Packed data tests](#packed-data-tests) section.
 
 #### Packed buffer performance - 2x buffer using 16-byte struct read multiple times and unpacked
 
-Packed buffer test uses two structs stored in two buffers that are read multiple times
+The test uses two structs stored in two buffers that are read multiple times
 and unpacked into four attributes:
 
 ```c++
@@ -666,17 +781,19 @@ void main() {
 }
 ```
 
-More details can be found in [Packed data tests](#packed-data-tests) section.
+More details about packed data can be found in [Packed data tests](#packed-data-tests) section.
 
 ### Attribute conversion test
 
-Used in the test:
-- Four attributes performance - 2x vec4 and 2x R8G8B8A8 attribute
+It is used in the test:
+- Four attributes performance - 2x vec4 and 2x uint attribute
 
 The code of the test is the same as [Attribute tests](#attribute-tests),
 particularly Four attributes performance - 4x vec4 attribute,
 with the exception that two buffers are not using VK_FORMAT_R32G32B32A32_SFLOAT
-but VK_FORMAT_R8G8B8A8_UNORM in VkPipelineVertexInputStateCreateInfo:
+but VK_FORMAT_R8G8B8A8_UNORM in VkPipelineVertexInputStateCreateInfo.
+Thus, the data conversion is needed on the shader input.
+The measurement of the conversion overhead is the focus of this test.
 
 ```c++
 array<const vk::VertexInputAttributeDescription,4>{  // pVertexAttributeDescriptions
@@ -711,18 +828,16 @@ array<const vk::VertexInputAttributeDescription,4>{  // pVertexAttributeDescript
 ## Matrix performance
 
 The matrix performance tests use one to five matrices in vertex or geometry shader.
-Matrices are sourced from uniform variable, buffer, attribute, shader constant or specialization constant.
+Matrices are read from uniform variable, buffer, attribute, shader constant or specialization constant.
 The matrices are either per-triangle or per-scene.
-Per-triangle matrices are sourced the matrix from a different memory location.
-Per-scene matrices are either constants, specialization constants or they are sourced from
+Per-triangle matrices are read from different memory locations.
+Per-scene matrices are either constants, specialization constants or they are read from
 the same memory location by each shader invocation.
-
-The resulting triangle throughput is equivalent to the number of geometry shader invocations
-or three times more vertex shader invocations, depending on particular test.
 
 ### Uniform vs buffer vs attribute matrix tests
 
-Three tests comparing performance of uniform matrix and per-triangle matrix sourced from buffer or attribute:
+The three tests compare performance of uniform matrix, per-triangle matrix read from buffer,
+and per-triangle matrix read using attribute:
 
 - Matrix performance - one matrix as uniform for all triangles
  
@@ -763,13 +878,14 @@ void main() {
 }
 ```
 
-### Single whole scene matrix test
+### Single per-scene matrix test
 
 Name of the test:
 - Matrix performance - one matrix in buffer for all triangles and two packed attributes
 
 This test shows the performance benefit of using per-scene matrix
-over to per-triangle matrices used in the [following tests](#single-per-triangle-matrix-performance).
+over to per-triangle matrices.
+Per-triangle matrices are measured in the [tests bellow](#single-per-triangle-matrix-tests).
 
 ```c++
 layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: float posZ, 3: half normalZ + half posW
@@ -791,8 +907,11 @@ void main() {
 
 ### Single per-triangle matrix tests
 
-Per-triangle matrix tests read a matrix from a buffer in vertex or geometry shader.
-It also processes two packed attributes or four not packed attributes.
+The tests read a matrix from a buffer in vertex or geometry shader.
+They also process 2x uvec4 packed attributes or four not packed attributes.
+
+The vertex shader code is similar to the one used in the [previous section](#single-per-scene-matrix-test)
+except that it does not use per-scene matrix but per-triangle matrix.
 
 Such approach is used in the following tests:
 - Matrix performance - per-triangle matrix in buffer and two packed attributes
@@ -802,17 +921,17 @@ Such approach is used in the following tests:
 
 ### Three matrices test
 
-Three matrices test represents a typical setup when only vertex positions are processed,
-or when normal matrices can be derived from view and model matrices.
+Three matrices test represents a typical rendering setup when only vertex positions are processed,
+or when normal transformation matrices can be derived from view and model matrices.
 
 It is used in the following test:
 - Matrix performance - 1x per-triangle matrix in buffer, 2x uniform matrix and and two packed attributes
 
 ### Five matrices tests
 
-Five matrices tests represent a typical setup when vertex positions and normals are processed.
+Five matrices tests represent a typical rendering setup when vertex positions and normals are processed.
 Positions utilize perspective, view and model matrix, e.g. 3x mat4.
-Normals need transposed inverse of view and model matrix, e.g. 2x mat3, unless further optimizations are deployed.
+Normals need transposed inverse of view matrix and of model matrix, e.g. 2x mat3, unless further optimizations are deployed.
 
 This is used in the following tests:
 - Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and two packed attributes
@@ -855,3 +974,241 @@ void main() {
 	              color * vec4(normalViewMatrix*normalMatrix[gl_VertexIndex/3]*normal, 1) * vec4(texCoord, 1, 1);
 }
 ```
+
+
+## Textured Phong performance
+
+These tests simulate textured Phong rendering. All the necessary inputs are fed into the VS,
+e.g. positions, normals, color and texture coordinates in the form of packed attributes (2x uvec4)
+and all transformation matrices (3 or 5 matrices). Phong lighting is usually computed in FS
+that is never run in our tests to measure pure triangle throughput.
+So, it is processing of transformations and making all attributes ready that are main focus of these tests.
+
+### Textured Phong, matrices and four attributes
+
+Tests using four attributes use vertex shader similar to the following one:
+
+```c++
+layout(location=0) in vec4 inPosition;
+layout(location=1) in vec3 inNormal;
+layout(location=2) in vec4 inColor;
+layout(location=3) in vec2 inTexCoord;
+
+layout(std430,binding=0) restrict readonly buffer ModelMatrix {
+	mat4 modelMatrix[];
+};
+
+layout(std430,binding=1) restrict readonly buffer NormalMatrix {
+	mat3 normalMatrix[];
+};
+
+layout(binding=2) uniform UniformBufferObject {
+	mat4 viewMatrix;
+	mat4 projectionMatrix;
+	mat3 normalViewMatrix;
+};
+
+layout(location=0) out vec3 eyePosition;
+layout(location=1) out vec3 eyeNormal;
+layout(location=2) out vec4 outColor;
+layout(location=3) out vec2 outTexCoord;
+
+void main()
+{
+	// compute outputs
+	vec4 eyePosition4 = viewMatrix * modelMatrix[gl_VertexIndex/3] * inPosition;
+	gl_Position = projectionMatrix * eyePosition4;
+	eyePosition = eyePosition4.xyz;
+	eyeNormal = normalViewMatrix * normalMatrix[gl_VertexIndex/3] * inNormal;
+	outColor = inColor;
+	outTexCoord = inTexCoord;
+}
+```
+
+Such approach is used in the following tests:
+- Textured Phong and Matrix performance - 2x per-triangle matrix in buffer (mat4+mat3), 3x uniform matrix (mat4+mat4+mat3) and four attributes (vec4f32+vec3f32+vec4u8+vec2f32)
+- Textured Phong and Matrix performance - 1x per-triangle matrix in buffer (mat4), 2x uniform matrix (mat4+mat4) and four attributes (vec4f32+vec3f32+vec4u8+vec2f32)
+
+### Textured Phong, matrices and packed attributes
+
+Tests using packed attributes use vertex shader similar to the following one:
+
+```c++
+layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: float posZ, 3: half normalZ + half posW
+layout(location=1) in uvec4 packedData2;  // 0: float texU, 1: float texV, 2: half normalX + half normalY, 3: uint color
+
+layout(std430,binding=0) restrict readonly buffer ModelMatrix {
+	layout(column_major) mat4 modelMatrix[];
+};
+
+layout(binding=1) uniform UniformBufferObject {
+	mat4 viewMatrix;
+	mat4 projectionMatrix;
+};
+
+layout(location=0) out vec3 eyePosition;
+layout(location=1) out vec3 eyeNormal;
+layout(location=2) out vec4 color;
+layout(location=3) out vec2 texCoord;
+
+
+void main() {
+
+	// unpack data
+	vec2 extra = unpackHalf2x16(packedData1.w);
+	vec4 position = vec4(uintBitsToFloat(packedData1.xyz), extra.y);
+	vec3 normal = vec3(unpackHalf2x16(packedData2.z), extra.x);
+
+	// compute outputs
+	mat4 m = modelMatrix[gl_VertexIndex/3];
+	vec4 eyePosition4 = viewMatrix * m * position;
+	gl_Position = projectionMatrix * eyePosition4;
+	eyePosition = eyePosition4.xyz;
+	eyeNormal = mat3(viewMatrix) * mat3(m) * normal;
+	color = unpackUnorm4x8(packedData2.w);
+	texCoord = uintBitsToFloat(packedData2.xy);
+
+}
+```
+
+With some variations, it is used in the following tests:
+- Textured Phong and Matrix performance - 1x per-triangle matrix in buffer (mat4), 2x uniform matrix (mat4+mat4) and 2x packed attribute
+- Textured Phong and Matrix performance - 1x per-triangle row-major matrix in buffer (mat4), 2x uniform not-row-major matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and Matrix performance - 1x per-triangle mat4x3 matrix in buffer, 2x uniform matrix (mat4+mat4) and 2x packed attribute
+- Textured Phong and Matrix performance - 1x per-triangle row-major mat4x3 matrix in buffer, 2x uniform matrix (mat4+mat4), 2x packed attribute
+
+
+### Textured Phong and PAT performance
+
+These tests simulate textured Phong rendering while using Position-Attitude-Transform (PAT) instead of matrices for tranformation.
+PAT is composed of translation of vertex positions and of object attitude, e.g. rotation.
+In our tests, the rotation is given by quaternion (vec4) and
+translation is specified by vec3 while stored as vec4, leaving one float for uniform scale or w-component.
+
+We use three different quaternion implementations marked PAT v1, PAT v2 and PAT v3.
+
+The VS code is similar to the following one:
+
+```c++
+layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: float posZ, 3: half normalZ + half posW
+layout(location=1) in uvec4 packedData2;  // 0: float texU, 1: float texV, 2: half normalX + half normalY, 3: uint color
+
+layout(binding=0) restrict readonly buffer ModelMatrix {
+	vec4 modelPAT[];  // model Position and Attitude Transformation, each transformation is composed of two vec4 - the first one is quaternion and the second translation
+};
+
+layout(binding=1) uniform UniformBufferObject {
+	mat4x4 viewMatrix;
+	mat4 projectionMatrix;
+};
+
+layout(location=0) out vec3 eyePosition;
+layout(location=1) out vec3 eyeNormal;
+layout(location=2) out vec4 color;
+layout(location=3) out vec2 texCoord;
+
+
+void main() {
+
+	// unpack data
+	vec2 extra = unpackHalf2x16(packedData1.w);
+	vec3 position = uintBitsToFloat(packedData1.xyz);
+	vec3 normal = vec3(unpackHalf2x16(packedData2.z), extra.x);
+
+	// compute outputs
+	uint i = gl_VertexIndex/3*2;
+	vec4 q = modelPAT[i+0];
+	vec3 t = modelPAT[i+1].xyz;
+	vec3 worldPosition = position + (2 * cross(q.xyz, cross(q.xyz, position) + (q.w * position))) + t;
+	eyePosition = mat3(viewMatrix) * worldPosition  +viewMatrix[3].xyz;
+	gl_Position = projectionMatrix * vec4(eyePosition, 1);
+	vec3 worldNormal = normal + (2 * cross(q.xyz, cross(q.xyz, normal) + (q.w * normal)));
+	eyeNormal = mat3(viewMatrix) * worldNormal;
+	color = unpackUnorm4x8(packedData2.w);
+	texCoord = uintBitsToFloat(packedData2.xy);
+
+}
+```
+
+Such approach is used in the following tests:
+- Textured Phong and PAT performance - PAT v1 (Position-Attitude-Transform, performing translation (vec3) and rotation (quaternion as vec4) using implementation 1), PAT is per-triangle 2x vec4 in buffer, 2x uniform matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and PAT performance - PAT v2 (Position-Attitude-Transform, performing translation (vec3) and rotation (quaternion as vec4) using implementation 2), PAT is per-triangle 2x vec4 in buffer, 2x uniform matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and PAT performance - PAT v3 (Position-Attitude-Transform, performing translation (vec3) and rotation (quaternion as vec4) using implementation 3), PAT is per-triangle 2x vec4 in buffer, 2x uniform matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and PAT performance - constant single PAT v2 sourced from the same index in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x packed attribute
+
+### Textured Phong, PAT, indexed rendering and primitive restart
+
+Four more tests based on [Textured Phong and PAT](#textured-phong-and-pat-performance)
+measure the performance of indexed rendering and primitive restart.
+Indexed rendering uses monotonically increasing indices,
+making each following index greater by one.
+Primitive restart tests appends -1 after each triangle.
+These are used in the following tests:
+
+- Textured Phong and PAT performance - indexed draw call, per-triangle PAT v2 in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and PAT performance - indexed draw call, constant single PAT v2 sourced from the same index in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and PAT performance - primitive restart, indexed draw call, per-triangle PAT v2 in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x packed attribute
+- Textured Phong and PAT performance - primitive restart, indexed draw call, constant single PAT v2 sourced from the same index in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x packed attribute
+
+### Textured Phong and double precision matrix performance
+
+Transformations in doubles are sometimes useful for scientific simulations or for visualization of large models.
+The tests are using double precision model and view matrices. Vertex positions are either single precision
+or double precision. Single precision vertex positions might be sufficient for small scene objects
+that only need double precision for placing the object into a very large scene.
+Double precision vertex positions might be useful for large scene objects or when very high precision is desired.
+
+Typical VS code looks like:
+
+```c++
+layout(location=0) in uvec4 packedData1;  // 0-1: doubleX, 2-3: doubleY
+layout(location=1) in uvec4 packedData2;  // 0-1: doubleZ, 2: half normalX + half normalY, 3: half normalZ + half posW
+layout(location=2) in uvec4 packedData3;  // 0: float texU, 1: float texV, 2: uint color
+
+layout(std430,binding=0) restrict readonly buffer ModelMatrix {
+	dmat4 modelMatrix[];
+};
+
+layout(binding=1) uniform UniformBufferObject {
+	dmat4 viewMatrix;
+	mat4 projectionMatrix;
+};
+
+layout(location=0) out vec3 eyePosition;
+layout(location=1) out vec3 eyeNormal;
+layout(location=2) out vec4 color;
+layout(location=3) out vec2 texCoord;
+
+void main() {
+
+	// unpack data
+	vec2 extra = unpackHalf2x16(packedData2.w);
+	dvec4 position = dvec4(packDouble2x32(packedData1.xy), packDouble2x32(packedData1.zw),
+	                       packDouble2x32(packedData2.xy), extra.y);
+	vec3 normal = vec3(unpackHalf2x16(packedData2.z), extra.x);
+
+	// compute outputs
+	dmat4 m = modelMatrix[gl_VertexIndex/3];
+	vec4 eyePosition4 = vec4(viewMatrix * m * position);
+	gl_Position = projectionMatrix * eyePosition4;
+	eyePosition = eyePosition4.xyz;
+	eyeNormal = mat3(viewMatrix) * mat3(m) * normal;
+	color = unpackUnorm4x8(packedData3.z);
+	texCoord = uintBitsToFloat(packedData3.xy);
+
+}
+```
+
+List of tests that use this approach:
+- Textured Phong and double precision matrix performance - double precision per-triangle matrix in buffer (dmat4),
+  double precision per-scene view matrix in uniform (dmat4), both matrices converted to single precision before computations,
+  single precision per-scene perspective matrix in uniform (mat4), single precision vertex positions, packed attributes (2x uvec4)
+- Textured Phong and double precision matrix performance - double precision per-triangle matrix in buffer (dmat4),
+  double precision per-scene view matrix in uniform (dmat4), both matrices multiplied in double precision, single precision
+  vertex positions, single precision per-scene perspective matrix in uniform (mat4), packed attributes (2x uvec4)
+- Textured Phong and double precision matrix performance - double precision per-triangle matrix in buffer (dmat4),
+  double precision per-scene view matrix in uniform (dmat4), both matrices multiplied in double precision, double precision
+  vertex positions (dvec3), single precision per-scene perspective matrix in uniform (mat4), packed attributes (3x uvec4)
+- Textured Phong and double precision matrix performance using GS - double precision per-triangle matrix in buffer (dmat4),
+  double precision per-scene view matrix in uniform (dmat4), both matrices multiplied in double precision, double precision
+  vertex positions (dvec3), single precision per-scene perspective matrix in uniform (mat4), packed attributes (3x uvec4)
