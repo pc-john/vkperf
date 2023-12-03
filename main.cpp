@@ -19,14 +19,17 @@ using namespace std;
 
 // constants
 static const string appName = "vkperf";
-static const uint32_t appVersion = VK_MAKE_VERSION(0,99,0);
+static const uint32_t appVersion = VK_MAKE_VERSION(0,99,1);
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
 static constexpr const double longTestTime = 60.;
 static constexpr const double standardTestTime = 2.;
 static constexpr const uint32_t numTrianglesStandard = uint32_t(1*1e6);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(1*1e5);
 static constexpr const uint32_t numTrianglesCpu = uint32_t(1*1e4);
+static constexpr const uint32_t numTrianglesMinimal = 2000;  // two times vertexStripLength
 static constexpr const uint32_t indirectRecordStride = 32;
+static constexpr const unsigned triangleSize = 0;
+static constexpr const uint32_t vertexStripLength = 1000;  // length of vertex sequence that might be used for rendering triangle strips of various lengths up to the vertexStripLength
 
 
 // Vulkan instance
@@ -334,11 +337,11 @@ static vk::UniqueBuffer packedDAttribute3;
 static vk::UniqueBuffer indexBuffer;
 static vk::UniqueBuffer primitiveRestartIndexBuffer;
 static vk::UniqueBuffer stripIndexBuffer;
-static vk::UniqueBuffer stripPrimitiveRestartIndexBuffer;
 static vk::UniqueBuffer stripPrimitiveRestart3IndexBuffer;
 static vk::UniqueBuffer stripPrimitiveRestart4IndexBuffer;
 static vk::UniqueBuffer stripPrimitiveRestart7IndexBuffer;
 static vk::UniqueBuffer stripPrimitiveRestart10IndexBuffer;
+static vk::UniqueBuffer stripPrimitiveRestart1002IndexBuffer;
 static vk::UniqueBuffer primitiveRestartMinusOne2IndexBuffer;
 static vk::UniqueBuffer primitiveRestartMinusOne5IndexBuffer;
 static vk::UniqueBuffer minusOneIndexBuffer;
@@ -376,11 +379,11 @@ static vk::UniqueDeviceMemory packedDAttribute3Memory;
 static vk::UniqueDeviceMemory indexBufferMemory;
 static vk::UniqueDeviceMemory primitiveRestartIndexBufferMemory;
 static vk::UniqueDeviceMemory stripIndexBufferMemory;
-static vk::UniqueDeviceMemory stripPrimitiveRestartIndexBufferMemory;
 static vk::UniqueDeviceMemory stripPrimitiveRestart3IndexBufferMemory;
 static vk::UniqueDeviceMemory stripPrimitiveRestart4IndexBufferMemory;
 static vk::UniqueDeviceMemory stripPrimitiveRestart7IndexBufferMemory;
 static vk::UniqueDeviceMemory stripPrimitiveRestart10IndexBufferMemory;
+static vk::UniqueDeviceMemory stripPrimitiveRestart1002IndexBufferMemory;
 static vk::UniqueDeviceMemory primitiveRestartMinusOne2IndexBufferMemory;
 static vk::UniqueDeviceMemory primitiveRestartMinusOne5IndexBufferMemory;
 static vk::UniqueDeviceMemory minusOneIndexBufferMemory;
@@ -405,9 +408,7 @@ static bool longTest=false;
 static bool debug=false;
 static vk::Extent2D framebufferExtent(0,0);
 static size_t sameDMatrixStagingBufferSize;
-static const unsigned triangleSize=0;
 static uint32_t numFullscreenQuads=10; // note: if you increase the value, make sure that fullscreenQuad*.vert is still drawing to the clip space (by gl_InstanceIndex)
-static const uint32_t triStripLength=1000;
 
 // sparse memory variables
 enum { SPARSE_NONE, SPARSE_BINDING, SPARSE_RESIDENCY, SPARSE_RESIDENCY_ALIASED };
@@ -1629,8 +1630,8 @@ static void initTests()
 	Test(
 		"   Matrix performance - GS five matrices processing, 2x per-triangle matrix\n"
 		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
-		"      2x uvec4 packed attribute passed through VS (all matrices and attributes\n"
-		"      multiplied):                             ",
+		"      2x uvec4 packed attributes passed through VS (all matrices and\n"
+		"      attributes multiplied):                  ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1736,8 +1737,9 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and Matrix performance - 1x per-triangle row-major matrix\n"
-		"      in buffer (mat4), 2x uniform not-row-major matrix (mat4+mat4), 2x uvec4\n"
-		"      packed attribute, no fragments produced: ",
+		"      in buffer (mat4), 2x uniform not-row-major matrix (mat4+mat4),\n"
+		"      2x uvec4 packed attributes,\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1750,7 +1752,7 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and Matrix performance - 1x per-triangle mat4x3 matrix\n"
-		"      in buffer, 2x uniform matrix (mat4+mat4) and 2x uvec4 packed attribute,\n"
+		"      in buffer, 2x uniform matrix (mat4+mat4) and 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1781,7 +1783,7 @@ static void initTests()
 		"   Textured Phong and PAT performance - PAT v1 (Position-Attitude-Transform,\n"
 		"      performing translation (vec3) and rotation (quaternion as vec4) using\n"
 		"      implementation 1), PAT is per-triangle 2x vec4 in buffer,\n"
-		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attribute,\n"
+		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1797,7 +1799,7 @@ static void initTests()
 		"   Textured Phong and PAT performance - PAT v2 (Position-Attitude-Transform,\n"
 		"      performing translation (vec3) and rotation (quaternion as vec4) using\n"
 		"      implementation 2), PAT is per-triangle 2x vec4 in buffer,\n"
-		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attribute,\n"
+		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1813,7 +1815,7 @@ static void initTests()
 		"   Textured Phong and PAT performance - PAT v3 (Position-Attitude-Transform,\n"
 		"      performing translation (vec3) and rotation (quaternion as vec4) using\n"
 		"      implementation 3), PAT is per-triangle 2x vec4 in buffer,\n"
-		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attribute,\n"
+		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1827,8 +1829,8 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and PAT performance - constant single PAT v2 sourced from\n"
-		"      the same index in buffer (2x vec4), 2x uniform matrix (mat4+mat4),\n"
-		"      2x uvec4 packed attribute,\n"
+		"      the same index in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4),\n"
+		"      2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1842,7 +1844,7 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and PAT performance - indexed draw call, per-triangle PAT v2\n"
-		"      in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x uvec4 packed\n"
+		"      in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4), 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1857,8 +1859,8 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and PAT performance - indexed draw call, constant single\n"
-		"      PAT v2 sourced from the same index in buffer (2x vec4),\n"
-		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attribute,\n"
+		"      PAT v2 sourced from the same index in buffer (vec3+vec4),\n"
+		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1874,8 +1876,8 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and PAT performance - primitive restart, indexed draw call,\n"
-		"      per-triangle PAT v2 in buffer (2x vec4), 2x uniform matrix (mat4+mat4),\n"
-		"      2x uvec4 packed attribute,\n"
+		"      per-triangle PAT v2 in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4),\n"
+		"      2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1891,8 +1893,8 @@ static void initTests()
 
 	Test(
 		"   Textured Phong and PAT performance - primitive restart, indexed draw call,\n"
-		"      constant single PAT v2 sourced from the same index in buffer (2x vec4),\n"
-		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attribute,\n"
+		"      constant single PAT v2 sourced from the same index in buffer (vec3+vec4),\n"
+		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -2037,15 +2039,14 @@ static void initTests()
 	};
 
 	const char* sharedVertexPerformanceText =
-		"   Shared vertex performance, strip-like geometry of various lengths,\n"
-		"      non-indexed per-strip draw call, each next triangle duplicates\n"
+		"   Shared vertex performance - strip-like geometry of various lengths,\n"
+		"      per-strip vkCmdDraw() call, each next triangle duplicates\n"
 		"      two vertices of previous triangle, textured Phong,\n"
-		"      constant single PAT v2 + 2xMatrix (2x uniform (mat4+mat4),\n"
-		"      PAT is quaternion (vec4, implementation 2) and translation (vec3),\n"
-		"      PAT is constant single 2x vec4f32 read from the same index\n"
-		"      in buffer in VS, 2x packed attribute,\n"
+		"      per-scene PAT v2 (Position-Attitude-Transform: translation (vec3)+\n"
+		"      quaternion rotation (vec4)) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,triStripLength}) {  // numbers in this list needs to be divide triStripLength (it is set to 1000) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			sharedVertexPerformanceText,
@@ -2071,15 +2072,14 @@ static void initTests()
 	}
 
 	const char* indexedSharedVertexPerformanceText =
-		"   Indexed shared vertex performance, strip-like geometry of various\n"
-		"      lengths, indexed per-strip draw call, indices of next triangle\n"
-		"      reuse two vertices of previous triangle, textured Phong,\n"
-		"      constant single PAT v2 + 2xMatrix  (2x uniform (mat4+mat4),\n"
-		"      PAT is quaternion (vec4, implementation 2) and translation (vec3),\n"
-		"      PAT is constant single 2x vec4f32 read from the same index\n"
-		"      in buffer in VS, 2x packed attribute,\n"
+		"   Indexed shared vertex performance - strip-like geometry of various\n"
+		"      lengths, per-strip vkCmdDrawIndexed() call, indices of the next\n"
+		"      triangle reuse two vertices of previous triangle, textured Phong,\n"
+		"      constant single PAT v2 (vec3+vec4) read from the same index\n"
+		"      in the buffer, 2x uniform matrix (mat4+mat4),\n"
+		"      packed attributes (2x uvec4)\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,triStripLength}) {  // numbers in this list needs to be divide triStripLength (it is set to 1000) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			indexedSharedVertexPerformanceText,
@@ -2105,14 +2105,12 @@ static void initTests()
 	}
 
 	const char* triStripPerformanceText =
-		"   Triangle strip performance, strips of various lengths,\n"
-		"      one draw call per strip, textured Phong,\n"
-		"      constant single PAT v2 + 2xMatrix (2x uniform (mat4+mat4),\n"
-		"      PAT is quaternion (vec4, implementation 2) and translation (vec3),\n"
-		"      PAT is constant single 2x vec4f32 read from the same index\n"
-		"      in buffer in VS, 2x packed attribute,\n"
+		"   Triangle strip performance - strips of various lengths,\n"
+		"      per-strip vkCmdDraw() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,triStripLength}) {  // numbers in this list needs to be divide triStripLength (it is set to 1000) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			triStripPerformanceText,
@@ -2129,8 +2127,8 @@ static void initTests()
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-				for(uint32_t i=0,e=(numTriangles/triStripLength)*(2+triStripLength); i<e; i+=2+triStripLength)
-					for(uint32_t j=i,je=j+triStripLength; j<je; j+=n)
+				for(uint32_t i=0,e=(numTriangles/vertexStripLength)*(2+vertexStripLength); i<e; i+=2+vertexStripLength)
+					for(uint32_t j=i,je=i+vertexStripLength; j<je; j+=n)
 						cb.draw(n+2, 1, j, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 				endTest(cb, timestampIndex);
 			}
@@ -2138,15 +2136,13 @@ static void initTests()
 	}
 
 	const char* indexedTriStripPerformanceText =
-		"   Indexed triangle strip performance, strips of various lengths,\n"
-		"      indexed per-strip draw call, indices just increase for each\n"
-		"      next vertex, textured Phong, constant single PAT v2 + 2xMatrix\n"
-		"      (2x uniform (mat4+mat4), PAT is quaternion\n"
-		"      (vec4, implementation 2) and translation (vec3),\n"
-		"      PAT is constant single 2x vec4f32 read from the same index\n"
-		"      in buffer in VS, 2x packed attribute,\n"
+		"   Indexed triangle strip performance - strips of various lengths,\n"
+		"      per-strip vkCmdDrawIndexed() call, indices just increase for each\n"
+		"      next vertex, textured Phong, constant single PAT v2 (vec3+vec4) read\n"
+		"      from the same index in the buffer, 2x uniform matrix (mat4+mat4),\n"
+		"      packed attributes (2x uvec4),\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,triStripLength}) {  // numbers in this list needs to be divide triStripLength (it is set to 1000) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			indexedTriStripPerformanceText,
@@ -2164,8 +2160,8 @@ static void initTests()
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-				for(uint32_t i=0,e=(numTriangles/triStripLength)*(2+triStripLength); i<e; i+=2+triStripLength)
-					for(uint32_t j=i,je=j+triStripLength; j<je; j+=n)
+				for(uint32_t i=0,e=(numTriangles/vertexStripLength)*(2+vertexStripLength); i<e; i+=2+vertexStripLength)
+					for(uint32_t j=i,je=i+vertexStripLength; j<je; j+=n)
 						cb.drawIndexed(n+2, 1, j, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 				endTest(cb, timestampIndex);
 			}
@@ -2173,27 +2169,20 @@ static void initTests()
 	}
 
 	const char* primitiveRestartPerformanceText =
-		"   Indexed triangle strip with primitive restart performance,\n"
-		"      strips of various lengths, single indexed draw call,\n"
-		"      indices form strips finished with -1, rendering as triangle strips,\n"
-		"      textured Phong, constant single PAT v2 + 2xMatrix\n"
-		"      (2x uniform (mat4+mat4), PAT is quaternion\n"
-		"      (vec4, implementation 2) and translation (vec3),\n"
-		"      PAT is constant single 2x vec4f32 read from the same index\n"
-		"      in buffer in VS, 2x packed attribute,\n"
-		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,5>{1,2,5,8,0}) {  // numbers in this list needs to be divide triStripLength (it is set to 1000) with reminder zero
+		"   Primitive restart performance with single per-scene vkCmdDrawIndexed() call,\n"
+		"      strips of various lengths (1-1000 triangles) each finished by -1,\n"
+		"      rendering as triangle strips, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ";
+	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			primitiveRestartPerformanceText,
 			n,
 			[](uint32_t n) {
-				string s = 
-					(n==0) ? static_cast<stringstream&&>(stringstream()
-						         << "         strip length 1000, all strips rendered by single\n"
-						            "            draw command: ").str()
-					       : static_cast<stringstream&&>(stringstream()
-						         << "         strip length " << n << ":   ").str();
+				string s = static_cast<stringstream&&>(stringstream()
+				           << "         strip length " << n << ":   ").str();
 				if(s.size()<28)
 					s.append(28-s.size(), ' ');
 				return s;
@@ -2202,39 +2191,33 @@ static void initTests()
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 			{
 				switch(triPerStrip) {
-				case 0: cb.bindIndexBuffer(stripPrimitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 1: cb.bindIndexBuffer(stripPrimitiveRestart3IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 2: cb.bindIndexBuffer(stripPrimitiveRestart4IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				case 1000: cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				default: assert(0 && "Unhandled triPerStrip parameter."); return;
 				};
 				beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-				if(triPerStrip==0)
-					cb.drawIndexed((triStripLength+3)*(numTriangles/triStripLength), 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-				else {
-					uint32_t numIndicesPerStrip = (triPerStrip+3) * (triStripLength/triPerStrip);
-					cb.drawIndexed(numIndicesPerStrip*(numTriangles/triStripLength), 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-				}
+				uint32_t numIndicesPerStrip = triPerStrip+3;
+				uint32_t numStrips = numTriangles/triPerStrip;
+				cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 				endTest(cb, timestampIndex);
 			}
 		);
 	}
 
 	const char* primitiveRestartPerStripDrawCallPerformanceText =
-		"   Indexed triangle strip with primitive restart performance,\n"
-		"      strips of various lengths, indexed per-strip draw call,\n"
-		"      indices form strips finished with -1, rendering as triangle strips,\n"
-		"      textured Phong, constant single PAT v2 + 2xMatrix\n"
-		"      (2x uniform (mat4+mat4), PAT is quaternion\n"
-		"      (vec4, implementation 2) and translation (vec3),\n"
-		"      PAT is constant single 2x vec4f32 read from the same index\n"
-		"      in buffer in VS, 2x packed attribute,\n"
-		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divide triStripLength (it is set to 1000) with reminder zero
+		"   Primitive restart performance with per-strip vkCmdDrawIndexed() call,\n"
+		"      strips of various lengths (1-1000 triangles) each finished by -1,\n"
+		"      rendering as triangle strips, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ";
+	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			primitiveRestartPerStripDrawCallPerformanceText,
@@ -2248,19 +2231,20 @@ static void initTests()
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 			{
 				switch(triPerStrip) {
-				case 1000: cb.bindIndexBuffer(stripPrimitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 1: cb.bindIndexBuffer(stripPrimitiveRestart3IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 2: cb.bindIndexBuffer(stripPrimitiveRestart4IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				case 1000: cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
 				default: assert(0 && "Unhandled triPerStrip parameter."); return;
 				};
 				beginTest(cb, phongTexturedSingleQuat2PrimitiveRestartPipeline.get(),
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-				uint32_t numIndicesPerStrip = (triPerStrip+3) * (triStripLength/triPerStrip);
-				for(uint32_t i=0,e=(numTriangles/triStripLength)*numIndicesPerStrip; i<e; i+=numIndicesPerStrip)
+				uint32_t numIndicesPerStrip = triPerStrip+3;
+				uint32_t numStrips = numTriangles/triPerStrip;
+				for(uint32_t i=0,e=numIndicesPerStrip*numStrips; i<e; i+=numIndicesPerStrip)
 					cb.drawIndexed(numIndicesPerStrip, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 				endTest(cb, timestampIndex);
 			}
@@ -2268,13 +2252,12 @@ static void initTests()
 	}
 
 	tests.emplace_back(
-		"   Two -1 in primitive restart followed by indexed triangle,\n"
-		"      two vertices reused from previous triangle, single indexed draw call,\n"
-		"      textured Phong, constant single PAT v2 + 2xMatrix  (2x uniform\n"
-		"      (mat4+mat4), PAT is quaternion (vec4, implementation 2) and\n"
-		"      translation (vec3), PAT is constant single 2x vec4f32 read from\n"
-		"      the same index in buffer in VS, 2x packed attribute,\n"
-		"      simplified FS that just uses all inputs: ",
+		"   Primitive restart using 2x -1 followed by indexed triangle,\n"
+		"      two vertices reused from previous triangle, single per-scene\n"
+		"      vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2289,13 +2272,12 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   Five -1 in primitive restart followed by indexed triangle,\n"
-		"      two vertices reused from previous triangle, single indexed draw call,\n"
-		"      textured Phong, constant single PAT v2 + 2xMatrix  (2x uniform\n"
-		"      (mat4+mat4), PAT is quaternion (vec4, implementation 2) and\n"
-		"      translation (vec3), PAT is constant single 2x vec4f32 read from\n"
-		"      the same index in buffer in VS, 2x packed attribute,\n"
-		"      simplified FS that just uses all inputs: ",
+		"   Primitive restart using 5x -1 followed by indexed triangle,\n"
+		"      two vertices reused from previous triangle, per-scene\n"
+		"      vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2310,13 +2292,12 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   All -1 performance, primitive restart indexed triangle strip,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      performance of indices (-1) per second:  ",
+		"   Primitive restart -1 performance, each triangle indices replaced by one -1,\n"
+		"      single per-scene vkCmdDrawIndexed() call, per-scene\n"
+		"      vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2330,14 +2311,14 @@ static void initTests()
 		}
 	);
 
+#if 0 // the test is probably not needed
 	tests.emplace_back(
-		"   All 0 index performance, primitive restart indexed triangle strip,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      degenerated triangles performance:       ",
+		"   All 0 index performance, the pipeline uses primitive restart and single\n"
+		"      per-scene triangle strip, single per-scene vkCmdDrawIndexed() call,\n"
+		"      textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2350,15 +2331,15 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}
 	);
+#endif
 
 	tests.emplace_back(
-		"   All 1 index performance, primitive restart indexed triangle strip,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      degenerated triangles performance:       ",
+		"   All 1 index performance, the pipeline uses primitive restart and single\n"
+		"      per-scene triangle strip, single per-scene vkCmdDrawIndexed() call,\n"
+		"      textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2372,14 +2353,13 @@ static void initTests()
 		}
 	);
 
+#if 0 // the test is probably not needed
 	tests.emplace_back(
-		"   All 0 index performance, indexed triangle strip,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      degenerated triangles per second:        ",
+		"   All 0 index performance, the pipeline uses single per-scene triangle strip,\n"
+		"      single per-scene vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2392,15 +2372,14 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}
 	);
+#endif
 
 	tests.emplace_back(
-		"   All 1 index performance, indexed triangle strip,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      degenerated triangles per second:        ",
+		"   All 1 index performance, the pipeline uses single per-scene triangle strip,\n"
+		"      single per-scene vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2414,14 +2393,13 @@ static void initTests()
 		}
 	);
 
+#if 0 // the test is probably not needed
 	tests.emplace_back(
-		"   All 0 index performance, indexed triangle list,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      triangles per second:                    ",
+		"   All 0 index performance, the pipeline uses indexed triangle list,\n"
+		"      single per-scene vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2434,15 +2412,14 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}
 	);
+#endif
 
 	tests.emplace_back(
-		"   All 1 index performance, indexed triangle list,\n"
-		"      single indexed draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      triangles per second:                    ",
+		"   All 1 index performance, the pipeline uses indexed triangle list,\n"
+		"      single per-scene vkCmdDrawIndexed() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2457,13 +2434,12 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   The same vertex triangle strip performance,\n"
-		"      per-strip draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      triangles per second:                    ",
+		"   The same vertex triangle strip performance - all the scene vertices are\n"
+		"      the same, each strip is composed of 1000 triangles, per-strip\n"
+		"      vkCmdDraw() call, textured Phong, constant single\n"
+		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
+		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
+		"      no fragments produced:                   ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2471,20 +2447,18 @@ static void initTests()
 			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ sameVertexPackedAttribute1.get(), sameVertexPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-			for(uint32_t i=0,e=(numTriangles/triStripLength)*(2+triStripLength); i<e; i+=2+triStripLength)
-				cb.draw(2+triStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			for(uint32_t i=0,e=(numTriangles/vertexStripLength)*(2+vertexStripLength); i<e; i+=2+vertexStripLength)
+				cb.draw(2+vertexStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
 		}
 	);
 
 	tests.emplace_back(
-		"   The same vertex triangle list performance,\n"
-		"      single draw call, textured Phong, constant single PAT v2 +\n"
-		"      2xMatrix (2x uniform (mat4+mat4), PAT is quaternion (vec4,\n"
-		"      implementation 2) and translation (vec3), PAT is constant single\n"
-		"      2x vec4f32 read from the same index in buffer in VS,\n"
-		"      2x packed attribute, simplified FS that just uses all inputs,\n"
-		"      triangles per second:                    ",
+		"   The same vertex triangle list performance - all the scene vertices are\n"
+		"      the same for the whole scene, single per-scene vkCmdDraw() call,\n"
+		"      textured Phong, constant single PAT v2 (vec3+vec4) read from the same\n"
+		"      index in the buffer, 2x uniform matrix (mat4+mat4), packed attributes\n"
+		"      (2x uvec4), no fragments produced:       ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -3057,50 +3031,32 @@ static void generateStripIndices(uint32_t* indices,uint32_t numStrips,uint32_t n
 }
 
 
-static size_t getStripIndexPrimitiveRestartBufferSize(uint32_t numStrips,uint32_t numTrianglesInStrip,uint32_t numIndicesBetweenRestarts)
+static size_t getStripIndexPrimitiveRestartBufferSize(uint32_t numStrips, uint32_t numTrianglesInStrip, uint32_t numMinusOnesBetweenStrips = 1)
 {
-	auto numStripLets=(numTrianglesInStrip/(numIndicesBetweenRestarts-2));
-	return size_t(numIndicesBetweenRestarts+1)*numStripLets*numStrips*sizeof(uint32_t);
+	return size_t(numStrips) * (numTrianglesInStrip+2+numMinusOnesBetweenStrips) * sizeof(uint32_t);
 }
 
 
-static void generateStripPrimitiveRestartIndices(uint32_t* indices,uint32_t numStrips,uint32_t numTrianglesInStrip,uint32_t numIndicesBetweenRestarts)
+static void generateStripPrimitiveRestartIndices(uint32_t* indices, uint32_t numStrips, uint32_t numTrianglesInStrip, uint32_t numMinusOnesBetweenStrips = 1)
 {
-	if(numTrianglesInStrip%(numIndicesBetweenRestarts-2)!=0)
-		throw runtime_error("generateStripPrimitiveRestartIndices(): numIndicesBetweenRestarts must match "
-		                    "numTrianglesInStrip in a way to be able to generate all the strips of the same "
-		                    "length without any excessive small strip at the end.");
+	if(vertexStripLength % numTrianglesInStrip != 0)
+		throw runtime_error("generateStripPrimitiveRestartIndices(): numTrianglesInStrip must match "
+		                    "vertexStripLength in a way to be able to generate all the strips of the same "
+		                    "length without no excessive small strip at the end.");
 
-	size_t idx=0;
+	size_t idx = 0;
+	uint32_t stripIndices = numTrianglesInStrip + 2 + numMinusOnesBetweenStrips;
+	uint32_t parts = numStrips/vertexStripLength;
 
-	for(uint32_t j=0; j<numStrips; j++) {
-		for(uint32_t i=j*(numTrianglesInStrip+2),e=i+numTrianglesInStrip; i<e;) {
-			for(uint32_t k=0; k<numIndicesBetweenRestarts; k++)
-				indices[idx++]=i+k;
-			indices[idx++]=-1;
-			i+=numIndicesBetweenRestarts-2;
-		}
-	}
-}
-
-
-static size_t getPrimitiveRestartMinusOneBufferSize(uint32_t numStrips,uint32_t numTrianglesInStrip,uint32_t numMinusOneBetweenRestarts)
-{
-	return size_t(numTrianglesInStrip)*(3+numMinusOneBetweenRestarts)*numStrips*sizeof(uint32_t);
-}
-
-
-static void generatePrimitiveRestartMinusOneIndices(uint32_t* indices,uint32_t numStrips,uint32_t numTrianglesInStrip,uint32_t numMinusOneBetweenRestarts)
-{
-	size_t idx=0;
-
-	for(uint32_t j=0; j<numStrips; j++) {
-		for(uint32_t i=j*(numTrianglesInStrip+2),e=i+numTrianglesInStrip; i<e; i++) {
-			indices[idx++]=i;
-			indices[idx++]=i+1;
-			indices[idx++]=i+2;
-			for(uint32_t k=0; k<numMinusOneBetweenRestarts; k++)
-				indices[idx++]=-1;
+	for(uint32_t j=0; j<parts; j++) {
+		for(uint32_t i=j*(vertexStripLength+2),e=i+vertexStripLength; i<e;) { 
+			for(uint32_t k=0; k<numTrianglesInStrip; k++)
+				indices[idx++] = i + k;
+			indices[idx++] = i + numTrianglesInStrip;
+			indices[idx++] = i + numTrianglesInStrip + 1;
+			for(uint32_t k=0; k<numMinusOnesBetweenStrips; k++)
+				indices[idx++] = -1;
+			i += numTrianglesInStrip;
 		}
 	}
 }
@@ -3591,7 +3547,7 @@ static void init(const string& nameFilter = "", int deviceIndex = -1)
 	// number of triangles
 	// (reduce the number of triangles based on amount of graphics memory as we might easily run out of it)
 	if(minimalTest)
-		numTriangles = 1000;
+		numTriangles = numTrianglesMinimal;
 	else {
 		if(gpuMemory >= 5.6*1024*1024*1024) // >=5.6GiB
 			numTriangles = numTrianglesStandard;
@@ -5174,8 +5130,6 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	primitiveRestartIndexBufferMemory.reset();
 	stripIndexBuffer.reset();
 	stripIndexBufferMemory.reset();
-	stripPrimitiveRestartIndexBuffer.reset();
-	stripPrimitiveRestartIndexBufferMemory.reset();
 	stripPrimitiveRestart3IndexBuffer.reset();
 	stripPrimitiveRestart3IndexBufferMemory.reset();
 	stripPrimitiveRestart4IndexBuffer.reset();
@@ -5184,6 +5138,8 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	stripPrimitiveRestart7IndexBufferMemory.reset();
 	stripPrimitiveRestart10IndexBuffer.reset();
 	stripPrimitiveRestart10IndexBufferMemory.reset();
+	stripPrimitiveRestart1002IndexBuffer.reset();
+	stripPrimitiveRestart1002IndexBufferMemory.reset();
 	primitiveRestartMinusOne2IndexBuffer.reset();
 	primitiveRestartMinusOne2IndexBufferMemory.reset();
 	primitiveRestartMinusOne5IndexBuffer.reset();
@@ -6514,19 +6470,19 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	size_t fourInterleavedBuffersSize=size_t(numTriangles)*3*64; // ~192MB
 	size_t indexBufferSize=size_t(numTriangles)*3*4;
 	size_t primitiveRestartIndexBufferSize=size_t(numTriangles)*4*4;
-	size_t stripIndexBufferSize=getIndexBufferSize(numTriangles/triStripLength,triStripLength);
-	size_t stripPrimitiveRestartIndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/triStripLength,triStripLength,triStripLength+2);
-	size_t stripPrimitiveRestart3IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/triStripLength,triStripLength,3);
-	size_t stripPrimitiveRestart4IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/triStripLength,triStripLength,4);
-	size_t stripPrimitiveRestart7IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/triStripLength,triStripLength,7);
-	size_t stripPrimitiveRestart10IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/triStripLength,triStripLength,10);
-	size_t primitiveRestartMinusOne2IndexBufferSize=getPrimitiveRestartMinusOneBufferSize(numTriangles/triStripLength,triStripLength,2);
-	size_t primitiveRestartMinusOne5IndexBufferSize=getPrimitiveRestartMinusOneBufferSize(numTriangles/triStripLength,triStripLength,5);
-	size_t minusOneIndexBufferSize=size_t(numTriangles)*4;
-	size_t zeroIndexBufferSize=size_t(numTriangles)*4*3;
-	size_t plusOneIndexBufferSize=size_t(numTriangles)*4*3;
-	size_t stripPackedDataBufferSize=getBufferSize(numTriangles/triStripLength,triStripLength,true);
-	size_t sharedVertexPackedDataBufferSize=getBufferSizeForSharedVertexTriangles(numTriangles/triStripLength,triStripLength,true);
+	size_t stripIndexBufferSize=getIndexBufferSize(numTriangles/vertexStripLength,vertexStripLength);
+	size_t stripPrimitiveRestart3IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/1, 1);
+	size_t stripPrimitiveRestart4IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/2, 2);
+	size_t stripPrimitiveRestart7IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/5, 5);
+	size_t stripPrimitiveRestart10IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/8, 8);
+	size_t stripPrimitiveRestart1002IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/1000, 1000);
+	size_t primitiveRestartMinusOne2IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/1, 1, 2);
+	size_t primitiveRestartMinusOne5IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/1, 1, 5);
+	size_t minusOneIndexBufferSize=size_t(numTriangles)*sizeof(uint32_t);
+	size_t zeroIndexBufferSize=size_t(numTriangles)*sizeof(uint32_t)*3;
+	size_t plusOneIndexBufferSize=size_t(numTriangles)*sizeof(uint32_t)*3;
+	size_t stripPackedDataBufferSize=getBufferSize(numTriangles/vertexStripLength,vertexStripLength,true);
+	size_t sharedVertexPackedDataBufferSize=getBufferSizeForSharedVertexTriangles(numTriangles/vertexStripLength,vertexStripLength,true);
 	size_t sameVertexPackedDataBufferSize=size_t(numTriangles)*3*16; // ~48MB
 	createBuffer(coordinate4Attribute,coordinate4AttributeMemory,coordinate4BufferSize,true,vk::BufferUsageFlagBits::eVertexBuffer |vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(coordinate4Buffer,   coordinate4BufferMemory,   coordinate4BufferSize,true,vk::BufferUsageFlagBits::eStorageBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
@@ -6558,11 +6514,11 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	createBuffer(indexBuffer,       indexBufferMemory,       indexBufferSize,       true,vk::BufferUsageFlagBits::eIndexBuffer  |vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(primitiveRestartIndexBuffer,         primitiveRestartIndexBufferMemory,         primitiveRestartIndexBufferSize,         true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(stripIndexBuffer,                    stripIndexBufferMemory,                    stripIndexBufferSize,                    true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
-	createBuffer(stripPrimitiveRestartIndexBuffer,    stripPrimitiveRestartIndexBufferMemory,    stripPrimitiveRestartIndexBufferSize,    true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(stripPrimitiveRestart3IndexBuffer,   stripPrimitiveRestart3IndexBufferMemory,   stripPrimitiveRestart3IndexBufferSize,   true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(stripPrimitiveRestart4IndexBuffer,   stripPrimitiveRestart4IndexBufferMemory,   stripPrimitiveRestart4IndexBufferSize,   true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(stripPrimitiveRestart7IndexBuffer,   stripPrimitiveRestart7IndexBufferMemory,   stripPrimitiveRestart7IndexBufferSize,   true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(stripPrimitiveRestart10IndexBuffer,  stripPrimitiveRestart10IndexBufferMemory,  stripPrimitiveRestart10IndexBufferSize,  true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
+	createBuffer(stripPrimitiveRestart1002IndexBuffer,stripPrimitiveRestart1002IndexBufferMemory,stripPrimitiveRestart1002IndexBufferSize,true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(primitiveRestartMinusOne2IndexBuffer,primitiveRestartMinusOne2IndexBufferMemory,primitiveRestartMinusOne2IndexBufferSize,true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(primitiveRestartMinusOne5IndexBuffer,primitiveRestartMinusOne5IndexBufferMemory,primitiveRestartMinusOne5IndexBufferSize,true,vk::BufferUsageFlagBits::eIndexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(minusOneIndexBuffer,         minusOneIndexBufferMemory,         minusOneIndexBufferSize,         true,vk::BufferUsageFlagBits::eIndexBuffer |vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
@@ -6707,11 +6663,11 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	StagingBuffer indexStagingBuffer(indexBufferSize);
 	StagingBuffer primitiveRestartIndexStagingBuffer(primitiveRestartIndexBufferSize);
 	StagingBuffer stripIndexStagingBuffer(stripIndexBufferSize);
-	StagingBuffer stripPrimitiveRestartIndexStagingBuffer(stripPrimitiveRestartIndexBufferSize);
 	StagingBuffer stripPrimitiveRestart3IndexStagingBuffer(stripPrimitiveRestart3IndexBufferSize);
 	StagingBuffer stripPrimitiveRestart4IndexStagingBuffer(stripPrimitiveRestart4IndexBufferSize);
 	StagingBuffer stripPrimitiveRestart7IndexStagingBuffer(stripPrimitiveRestart7IndexBufferSize);
 	StagingBuffer stripPrimitiveRestart10IndexStagingBuffer(stripPrimitiveRestart10IndexBufferSize);
+	StagingBuffer stripPrimitiveRestart1002IndexStagingBuffer(stripPrimitiveRestart1002IndexBufferSize);
 	StagingBuffer primitiveRestartMinusOne2IndexStagingBuffer(primitiveRestartMinusOne2IndexBufferSize);
 	StagingBuffer primitiveRestartMinusOne5IndexStagingBuffer(primitiveRestartMinusOne5IndexBufferSize);
 	StagingBuffer minusOneIndexStagingBuffer(minusOneIndexBufferSize);
@@ -6926,30 +6882,30 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 
 	// stripIndex
 	stripIndexStagingBuffer.map();
-	generateStripIndices(reinterpret_cast<uint32_t*>(stripIndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength);
+	generateStripIndices(reinterpret_cast<uint32_t*>(stripIndexStagingBuffer.ptr), numTriangles/vertexStripLength, vertexStripLength);
 	stripIndexStagingBuffer.unmap();
 
 	// stripPrimitiveRestartIndex
-	stripPrimitiveRestartIndexStagingBuffer.map();
-	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestartIndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,triStripLength+2);
-	stripPrimitiveRestartIndexStagingBuffer.unmap();
 	stripPrimitiveRestart3IndexStagingBuffer.map();
-	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart3IndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,3);
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart3IndexStagingBuffer.ptr), numTriangles/1, 1);
 	stripPrimitiveRestart3IndexStagingBuffer.unmap();
 	stripPrimitiveRestart4IndexStagingBuffer.map();
-	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart4IndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,4);
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart4IndexStagingBuffer.ptr), numTriangles/2, 2);
 	stripPrimitiveRestart4IndexStagingBuffer.unmap();
 	stripPrimitiveRestart7IndexStagingBuffer.map();
-	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart7IndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,7);
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart7IndexStagingBuffer.ptr), numTriangles/5, 5);
 	stripPrimitiveRestart7IndexStagingBuffer.unmap();
 	stripPrimitiveRestart10IndexStagingBuffer.map();
-	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart10IndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,10);
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart10IndexStagingBuffer.ptr), numTriangles/8, 8);
 	stripPrimitiveRestart10IndexStagingBuffer.unmap();
+	stripPrimitiveRestart1002IndexStagingBuffer.map();
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(stripPrimitiveRestart1002IndexStagingBuffer.ptr), numTriangles/1000, 1000);
+	stripPrimitiveRestart1002IndexStagingBuffer.unmap();
 	primitiveRestartMinusOne2IndexStagingBuffer.map();
-	generatePrimitiveRestartMinusOneIndices(reinterpret_cast<uint32_t*>(primitiveRestartMinusOne2IndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,2);
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(primitiveRestartMinusOne2IndexStagingBuffer.ptr), numTriangles/1, 1, 2);
 	primitiveRestartMinusOne2IndexStagingBuffer.unmap();
 	primitiveRestartMinusOne5IndexStagingBuffer.map();
-	generatePrimitiveRestartMinusOneIndices(reinterpret_cast<uint32_t*>(primitiveRestartMinusOne5IndexStagingBuffer.ptr),numTriangles/triStripLength,triStripLength,5);
+	generateStripPrimitiveRestartIndices(reinterpret_cast<uint32_t*>(primitiveRestartMinusOne5IndexStagingBuffer.ptr), numTriangles/1, 1, 5);
 	primitiveRestartMinusOne5IndexStagingBuffer.unmap();
 	minusOneIndexStagingBuffer.map();
 	fill(reinterpret_cast<int32_t*>(minusOneIndexStagingBuffer.ptr),reinterpret_cast<int32_t*>(minusOneIndexStagingBuffer.ptr)+minusOneIndexBufferSize/4,int32_t(-1));
@@ -6963,8 +6919,8 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 
 	// stripPackedAttributes
 	generateStrips(
-		reinterpret_cast<float*>(stripPackedAttribute1StagingBuffer.map()),numTriangles/triStripLength,
-		triStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
+		reinterpret_cast<float*>(stripPackedAttribute1StagingBuffer.map()),numTriangles/vertexStripLength,
+		vertexStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
 		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=stripPackedDataBufferSize/4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(stripPackedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
@@ -6988,8 +6944,8 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 
 	// sharedVertexPackedAttributes
 	generateSharedVertexTriangles(
-		reinterpret_cast<float*>(sharedVertexPackedAttribute1StagingBuffer.map()),numTriangles/triStripLength,
-		triStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
+		reinterpret_cast<float*>(sharedVertexPackedAttribute1StagingBuffer.map()),numTriangles/vertexStripLength,
+		vertexStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
 		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=sharedVertexPackedDataBufferSize/4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(sharedVertexPackedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
@@ -7206,12 +7162,6 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 		&(const vk::BufferCopy&)vk::BufferCopy(0,0,stripIndexBufferSize)  // pRegions
 	);
 	submitNowCommandBuffer->copyBuffer(
-		stripPrimitiveRestartIndexStagingBuffer.buffer.get(),  // srcBuffer
-		stripPrimitiveRestartIndexBuffer.get(),                // dstBuffer
-		1,                                                     // regionCount
-		&(const vk::BufferCopy&)vk::BufferCopy(0,0,stripPrimitiveRestartIndexBufferSize)  // pRegions
-	);
-	submitNowCommandBuffer->copyBuffer(
 		stripPrimitiveRestart3IndexStagingBuffer.buffer.get(),  // srcBuffer
 		stripPrimitiveRestart3IndexBuffer.get(),                // dstBuffer
 		1,                                                      // regionCount
@@ -7234,6 +7184,12 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 		stripPrimitiveRestart10IndexBuffer.get(),                // dstBuffer
 		1,                                                       // regionCount
 		&(const vk::BufferCopy&)vk::BufferCopy(0,0,stripPrimitiveRestart10IndexBufferSize)  // pRegions
+	);
+	submitNowCommandBuffer->copyBuffer(
+		stripPrimitiveRestart1002IndexStagingBuffer.buffer.get(),  // srcBuffer
+		stripPrimitiveRestart1002IndexBuffer.get(),                // dstBuffer
+		1,                                                     // regionCount
+		&(const vk::BufferCopy&)vk::BufferCopy(0,0,stripPrimitiveRestart1002IndexBufferSize)  // pRegions
 	);
 	submitNowCommandBuffer->copyBuffer(
 		primitiveRestartMinusOne2IndexStagingBuffer.buffer.get(),  // srcBuffer
@@ -7345,9 +7301,11 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	indexStagingBuffer.reset();
 	primitiveRestartIndexStagingBuffer.reset();
 	stripIndexStagingBuffer.reset();
-	stripPrimitiveRestartIndexStagingBuffer.reset();
 	stripPrimitiveRestart3IndexStagingBuffer.reset();
 	stripPrimitiveRestart4IndexStagingBuffer.reset();
+	stripPrimitiveRestart7IndexStagingBuffer.reset();
+	stripPrimitiveRestart10IndexStagingBuffer.reset();
+	stripPrimitiveRestart1002IndexStagingBuffer.reset();
 	primitiveRestartMinusOne2IndexStagingBuffer.reset();
 	primitiveRestartMinusOne5IndexStagingBuffer.reset();
 	minusOneIndexStagingBuffer.reset();
@@ -9538,7 +9496,7 @@ int main(int argc,char** argv)
 				else if(strcmp(argv[i], "--sparse-binding") == 0)  sparseMode = SPARSE_BINDING;
 				else if(strcmp(argv[i], "--sparse-residency") == 0)  sparseMode = SPARSE_RESIDENCY;
 				else if(strcmp(argv[i], "--sparse-residency-aliased") == 0)  sparseMode = SPARSE_RESIDENCY_ALIASED;
-				else if(strcmp(argv[i], "--debug") == 0 || strcmp(argv[i], "-d") == 0)  debug = true;
+				else if(strcmp(argv[i], "--debug") == 0)  debug = true;
 				else if(strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)  printHelp = true;
 				else {
 					cout << "Invalid argument: " << argv[i] << endl;

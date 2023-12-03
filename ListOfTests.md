@@ -40,6 +40,22 @@ The list of tests follows:
 - [Textured Phong and PAT performance](#textured-phong-and-pat-performance)
 - [Textured Phong, PAT, indexed rendering and primitive restart](#textured-phong-pat-indexed-rendering-and-primitive-restart)
 - [Textured Phong and double precision matrix performance](#textured-phong-and-double-precision-matrix-performance)
+70. [Shared vertex performance](#shared-vertex-performance)
+71. [Indexed shared vertex performance](#indexed-shared-vertex-performance)
+72. [Triangle strip performance](#triangle-strip-performance)
+73. [Indexed triangle strip performance](#indexed-triangle-strip-performance)
+74. - 78. [Primitive restart performance](#primitive-restart-performance)
+- [Primitive restart performance with single per-scene vkCmdDrawIndexed() call](#primitive-restart-performance-with-single-per-scene-vkcmddrawindexed-call)
+- [Primitive restart performance with per-strip vkCmdDrawIndexed() call](#primitive-restart-performance-with-per-strip-vkcmddrawindexed-call)
+- [Primitive restart using 2x -1 followed by indexed triangle](#primitive-restart-using-2x-1-followed-by-indexed-triangle)
+- [Primitive restart using 5x -1 followed by indexed triangle](#primitive-restart-using-5x-1-followed-by-indexed-triangle)
+- [Primitive restart -1 performance, each triangle indices replaced by one -1](#primitive-restart-1-performance-each-triangle-indices-replaced-by-one-1)
+79. - 83. [The same vertex processing performance](#the-same-vertex-processing-performance)
+- [All 1 index performance, the pipeline uses primitive restart](#all-1-index-performance-the-pipeline-uses-primitive-restart)
+- [All 1 index performance, the pipeline uses single per-scene triangle strip](#all-1-index-performance-the-pipeline-uses-single-per-scene-triangle-strip)
+- [All 1 index performance, the pipeline uses indexed triangle list](#all-1-index-performance-the-pipeline-uses-indexed-triangle-list)
+- [The same vertex triangle strip performance](#the-same-vertex-triangle-strip-performance)
+- [The same vertex triangle list performance](#the-same-vertex-triangle-list-performance)
 
 
 ## VS max throughput
@@ -176,7 +192,7 @@ void main() {
 ```
 
 It uses empty vertex shader and single vkCmdDraw() call
-as in the [previous test](#gs-max-throughput-when-no-output-is-produced)
+as in the [previous test](#gs-max-throughput-when-no-output-is-produced).
 
 
 ## GS max throughput when two constant triangles are produced
@@ -204,7 +220,7 @@ void main() {
 ```
 
 It uses empty vertex shader and single vkCmdDraw() call
-as in the [previous two tests](#gs-max-throughput-when-no-output-is-produced)
+as in the [previous two tests](#gs-max-throughput-when-no-output-is-produced).
 
 
 ## Instancing throughput of vkCmdDraw()
@@ -288,8 +304,18 @@ void main() {
 
 ## Instancing throughput of vkCmdDrawIndexedIndirect()
 
-The test is the same as the [previous test](#instancing-throughput-of-vkcmddrawindirect)
-except that it uses indexed draw call:
+Instancing throughput test of vkCmdDrawIndexedIndirect() uses single triangle instanced
+many times in single VkDrawIndexedIndirectCommand struct with the following content:
+
+```c++
+	indirectIndexedBufferPtr->indexCount = 3;
+	indirectIndexedBufferPtr->instanceCount = numTriangles;
+	indirectIndexedBufferPtr->firstIndex = 0;
+	indirectIndexedBufferPtr->vertexOffset = 0;
+	indirectIndexedBufferPtr->firstInstance = 0;
+```
+
+The VkDrawIndexedIndirectCommand structure is processed by a single vkCmdDrawIndirect() call:
 
 ```c++
 vkCmdDrawIndexedIndirect(
@@ -300,6 +326,8 @@ vkCmdDrawIndexedIndirect(
 	sizeof(VkDrawIndexedIndirectCommand)  // stride
 );
 ```
+
+The vertex shader outputs constant coordinates as in the [previous test](#instancing-throughput-of-vkcmddrawindirect).
 
 
 ## Draw command throughput
@@ -788,9 +816,9 @@ More details about packed data can be found in [Packed data tests](#packed-data-
 It is used in the test:
 - Four attributes performance - 2x vec4 and 2x uint attribute
 
-The code of the test is the same as [Attribute tests](#attribute-tests),
-particularly Four attributes performance - 4x vec4 attribute,
-with the exception that two buffers are not using VK_FORMAT_R32G32B32A32_SFLOAT
+The code of the test is the same as
+"Four attributes performance - 4x vec4 attribute" test in [Attribute tests](#attribute-tests) section
+with the exception that two of four buffers are not using VK_FORMAT_R32G32B32A32_SFLOAT
 but VK_FORMAT_R8G8B8A8_UNORM in VkPipelineVertexInputStateCreateInfo.
 Thus, the data conversion is needed on the shader input.
 The measurement of the conversion overhead is the focus of this test.
@@ -1094,7 +1122,8 @@ layout(location=0) in uvec4 packedData1;  // 0: float posX, 1: float posY, 2: fl
 layout(location=1) in uvec4 packedData2;  // 0: float texU, 1: float texV, 2: half normalX + half normalY, 3: uint color
 
 layout(binding=0) restrict readonly buffer ModelMatrix {
-	vec4 modelPAT[];  // model Position and Attitude Transformation, each transformation is composed of two vec4 - the first one is quaternion and the second translation
+	vec4 modelPAT[];  // model Position and Attitude Transformation, each transformation is composed
+	                  // of two vec4 - the first one is quaternion and the second translation
 };
 
 layout(binding=1) uniform UniformBufferObject {
@@ -1138,7 +1167,7 @@ Such approach is used in the following tests:
 
 ### Textured Phong, PAT, indexed rendering and primitive restart
 
-Four more tests based on [Textured Phong and PAT](#textured-phong-and-pat-performance)
+The tests based on [Textured Phong and PAT](#textured-phong-and-pat-performance)
 measure the performance of indexed rendering and primitive restart.
 Indexed rendering uses monotonically increasing indices,
 making each following index greater by one.
@@ -1212,3 +1241,213 @@ List of tests that use this approach:
 - Textured Phong and double precision matrix performance using GS - double precision per-triangle matrix in buffer (dmat4),
   double precision per-scene view matrix in uniform (dmat4), both matrices multiplied in double precision, double precision
   vertex positions (dvec3), single precision per-scene perspective matrix in uniform (mat4), packed attributes (3x uvec4)
+
+
+## Shared vertex performance
+
+The test measures rendering performance of triangle strip-like geometry.
+The pipeline is using VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST.
+For each new triangle, we duplicate the coordinates of the two vertices of the previous triangle.
+A number of tests are performed, using different lenght of the strip for each test.
+The vkCmdDraw() call is used for each strip.
+
+The simplified rendering code is as follows:
+```c++
+for(uint32_t i=0,e=3*numberOfTriangles; i<e; i+=trianglesPerStrip*3)
+	vkCmdDraw(
+		commandBuffer,
+		trianglesPerStrip*3,  // vertexCount
+		1,  // instanceCount
+		i,  // firstVertex
+		0  // firstInstance
+	);
+```
+
+The rest of the code is based on [Textured Phong and PAT](#textured-phong-and-pat-performance).
+So, it contains VS that implements textured Phong, per-scene PAT v2 (Position-Attitude-Transform:
+translation (vec3)+quaternion rotation (vec4)) that is read from the same index in the buffer,
+2x uniform matrix (mat4+mat4) and 2x packed attribute. 
+
+The positions of vertices are generated in a way to specify tiny triangles
+in between pixel sampling locations distributed roughly across the whole framebuffer.
+So, they do not produce any fragments in the rasterizer.
+
+
+## Indexed shared vertex performance
+
+The test measures rendering performance of indexed triangle strip-like geometry.
+The pipeline is using VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST.
+For each new triangle, we reuse two indices of the previous triangle.
+A number of tests are performed, using different lenght of the strip for each test.
+The vkCmdDrawIndexed() call is used for each strip.
+
+The simplified rendering code is as follows:
+```c++
+for(uint32_t i=0,e=3*numberOfTriangles; i<e; i+=trianglesPerStrip*3)
+	vkCmdDrawIndexed(
+		commandBuffer,
+		trianglesPerStrip*3,  // indexCount
+		1,  // instanceCount
+		i,  // firstIndex
+		0,  // vertexOffset
+		0  // firstInstance
+	);
+```
+
+The rest of the code is similar to the [previous test](#shared-vertex-performance).
+
+
+## Triangle strip performance
+
+The test measures rendering performance of triangle strips.
+The pipeline uses VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP. So, two vertices of each
+triangle are expected to be reused from the previous triangle by Vulkan device.
+A number of tests are performed, using different lenght of the strip for each test.
+The vkCmdDraw() call is used for each strip.
+
+The simplified rendering code is as follows:
+```c++
+for(uint32_t i=0,e=totalNumberOfIndices; i<e; i+=2+maxTrianglesPerStrip)
+	for(uint32_t j=i,je=i+maxTrianglesPerStrip; j<je; j+=trianglesPerStrip)
+		vkCmdDraw(
+			commandBuffer,
+			trianglesPerStrip+2,  // vertexCount
+			1,  // instanceCount
+			j,  // firstVertex
+			0  // firstInstance
+		);
+```
+
+The rest of the code is similar to the [previous two tests](#shared-vertex-performance).
+
+
+## Indexed triangle strip performance
+
+The test measures rendering performance of indexed triangle strips.
+The pipeline uses VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP. So, two vertices of each
+triangle are expected to be reused from the previous triangle by Vulkan device.
+The indices in index buffer increase by one on each next position.
+A number of tests are performed, using different lenght of the strip for each test.
+The vkCmdDrawIndexed() call is used for each strip.
+
+The simplified rendering code is as follows:
+```c++
+for(uint32_t i=0,e=totalNumberOfIndices; i<e; i+=2+maxTrianglesPerStrip)
+	for(uint32_t j=i,je=i+maxTrianglesPerStrip; j<je; j+=trianglesPerStrip)
+		vkCmdDrawIndexed(
+			commandBuffer,
+			trianglesPerStrip+2,  // indexCount
+			1,  // instanceCount
+			j,  // firstIndex
+			0,  // vertexOffset
+			0  // firstInstance
+		);
+```
+
+The rest of the code is similar to the [previous three tests](#shared-vertex-performance).
+
+
+## Primitive restart performance
+
+The primitive restart tests should answer, among others, question of primitive restart overhead.
+
+The tests based on [Textured Phong and PAT tests](#textured-phong-and-pat-performance).
+Thus, VS is using packed attributes (2x vec4) extracted into position+normal+color+textureCoordinates,
+two uniform matrices (mat4+mat4) for perspective and view matrix, and
+constant single PAT v2 (vec3+vec4) read from the same index in the buffer (Position-Attitude-Transform,
+e.g. translation by vec3 and rotation by vec4 quaternion). No framents are produced in these tests.
+
+### Primitive restart performance with single per-scene vkCmdDrawIndexed() call
+
+Five tests are performed:
+- for having -1 after each triangle (three indices followed by -1),
+- after each two triangles (four indices followed by -1),
+- after each five triangles (seven indices followed by -1),
+- after each eight triangles (ten indices followed by -1),
+- after each thousand triangles (1002 indices followed by -1).
+
+The simplified rendering code is as follows:
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	numIndicesInTheScene,  // indexCount
+	1,  // instanceCount
+	0,  // firstIndex
+	0,  // vertexOffset
+	0  // firstInstance
+);
+```
+
+More details are in the [Primitive restart section](#primitive-restart-performance).
+
+### Primitive restart performance with per-strip vkCmdDrawIndexed() call
+
+The test is the same as the [previous one](#primitive-restart-performance-with-single-per-scene-vkcmddrawindexed-call)
+except it uses vkCmdDrawIndexed for each strip:
+
+```c++
+for(uint32_t i=0,e=numStrips*numIndicesPerStrip; i<e; i+=numIndicesPerStrip)
+	cb.drawIndexed(numIndicesPerStrip, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+	vkCmdDrawIndexed(
+		commandBuffer,
+		numIndicesPerStrip,  // indexCount
+		1,  // instanceCount
+		i,  // firstIndex
+		0,  // vertexOffset
+		0  // firstInstance
+	);
+```
+
+### Primitive restart using 2x -1 followed by indexed triangle
+
+Each triangle is followed by two -1. It uses single per-scene vkCmdDrawIndexed() call.
+
+### Primitive restart using 5x -1 followed by indexed triangle
+
+Each triangle is followed by five -1. It uses single per-scene vkCmdDrawIndexed() call.
+
+### Primitive restart -1 performance, each triangle indices replaced by one -1
+
+The test measures processing performance of -1.
+Each triangle is replaced by single -1. It uses single per-scene vkCmdDrawIndexed() call.
+
+
+## The same vertex processing performance
+
+The five tests are processing the same vertex or vertex index.
+What differs is the use of primitive restart, using of indices,
+and the use of triangle strip or triangle list.
+
+All the tests are using textured Phong vertex shader, constant single PAT v2 (vec3+vec4)
+read from the same index in the buffer, 2x uniform matrix (mat4+mat4) as
+view and perspective matrix, and packed attributes (2x uvec4).
+Geometry is provided in a way to not produce any fragments in the rasterizer.
+
+### All 1 index performance, the pipeline uses primitive restart
+
+The test uses the value 1 in the index buffer for all vertices in the scene.
+It is rendered by single vkCmdDrawIndexed() call while using pipeline with primitive restart
+and one per-scene triangle strip (composed of indices with value 1).
+
+### All 1 index performance, the pipeline uses single per-scene triangle strip
+
+The test uses the value 1 in the index buffer for all vertices in the scene.
+It is rendered by single vkCmdDrawIndexed() call
+and one per-scene triangle strip (composed of indices with value 1).
+
+### All 1 index performance, the pipeline uses indexed triangle list
+
+The test uses the value 1 in the index buffer for all vertices in the scene.
+It is rendered by single vkCmdDrawIndexed() call as triangle list
+(composed of indices with value 1).
+
+### The same vertex triangle strip performance
+
+The test uses vertices with the same coordinates and attributes for the whole scene.
+All the vertices are rendered by single vkCmdDraw() call while using triangle strip.
+
+### The same vertex triangle list performance
+
+The test uses vertices with the same coordinates and attributes for the whole scene.
+All the vertices are rendered by single vkCmdDraw() call while using triangle list.
+
