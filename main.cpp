@@ -23,13 +23,13 @@ static const uint32_t appVersion = VK_MAKE_VERSION(0,99,1);
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
 static constexpr const double longTestTime = 60.;
 static constexpr const double standardTestTime = 2.;
-static constexpr const uint32_t numTrianglesStandard = uint32_t(1*1e6);
-static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(1*1e5);
-static constexpr const uint32_t numTrianglesCpu = uint32_t(1*1e4);
-static constexpr const uint32_t numTrianglesMinimal = 2000;  // two times vertexStripLength
+static constexpr const uint32_t numTrianglesStandard = uint32_t(500*1e3);
+static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(100*1e3);
+static constexpr const uint32_t numTrianglesCpu = uint32_t(10*1e3);
+static constexpr const uint32_t numTrianglesMinimal = 2000;  // two times maxTriStripLength
 static constexpr const uint32_t indirectRecordStride = 32;
 static constexpr const unsigned triangleSize = 0;
-static constexpr const uint32_t vertexStripLength = 1000;  // length of vertex sequence that might be used for rendering triangle strips of various lengths up to the vertexStripLength
+static constexpr const uint32_t maxTriStripLength = 1000;  // length of triangle strip used during various measurements; some tests are splitting it to various lenght strips, while reusing two previous vertices from the previous strip
 
 
 // Vulkan instance
@@ -244,7 +244,11 @@ static vk::UniqueImageView colorImageView;
 static vk::UniqueImageView depthImageView;
 static vk::UniqueFence fence;
 static vk::UniquePipeline attributelessConstantOutputPipeline;
+static vk::UniquePipeline attributelessConstantOutputTriStripPipeline;
+static vk::UniquePipeline attributelessConstantOutputPrimitiveRestartPipeline;
 static vk::UniquePipeline attributelessInputIndicesPipeline;
+static vk::UniquePipeline attributelessInputIndicesTriStripPipeline;
+static vk::UniquePipeline attributelessInputIndicesPrimitiveRestartPipeline;
 static vk::UniquePipeline coordinateAttributePipeline;
 static vk::UniquePipeline coordinate4BufferPipeline;
 static vk::UniquePipeline coordinate3BufferPipeline;
@@ -747,8 +751,8 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS max throughput (single vkCmdDraw() call, attributeless,\n"
-		"      constant VS output):                     ",
+		"   VS max throughput for triangle list (single per-scene vkCmdDraw() call,\n"
+		"      attributeless, constant VS output):      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -760,9 +764,9 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS max throughput using indexed draw call (single vkCmdDrawIndexed() call,\n"
-		"      monotonically increasing indices, attributeless,\n"
-		"      constant VS output):                     ",
+		"   VS max throughput for indexed triangle list (single per-scene\n"
+		"      vkCmdDrawIndexed() call, monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -775,8 +779,59 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS VertexIndex and InstanceIndex forming output\n"
-		"      (one vkCmdDraw() call, attributeless):   ",
+		"   VS max throughput for triangle strip\n"
+		"      (per-strip vkCmdDraw() call, 1000 triangles per strip,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+				cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}),
+
+	Test(
+		"   VS max throughput for indexed triangle strip\n"
+		"      (per-strip vkCmdDrawIndexed() call, 1000 triangles per strip,\n"
+		"      monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+				cb.drawIndexed(2+maxTriStripLength, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}),
+
+	Test(
+		"   VS max throughput for primitive restart indexed triangle strip\n"
+		"      (single per-scene vkCmdDrawIndexed() call, 1000 triangles per strip\n"
+		"      followed by -1, monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPrimitiveRestartPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			uint32_t numIndicesPerStrip = maxTriStripLength+3;
+			uint32_t numStrips = numTriangles/maxTriStripLength;
+			cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}),
+
+	Test(
+		"   VS max throughput for triangle list, VertexIndex and InstanceIndex used for\n"
+		"      position output (single per-scene vkCmdDraw() call,\n"
+		"      attributeless:                           ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -788,17 +843,69 @@ static void initTests()
 		}),
 
 	Test(
-		"   VS VertexIndex and InstanceIndex forming output using indexed draw call\n"
-		"      (one vkCmdDrawIndexed() call, monotonically increasing indices,\n"
+		"   VS max throughput for indexed triangle list, VertexIndex and InstanceIndex\n"
+		"      used for position output (single per-scene vkCmdDrawIndexed() call,\n"
+		"      monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}),
+
+	Test(
+		"   VS max throughput for triangle strip, VertexIndex and InstanceIndex\n"
+		"      used for position output (per-strip vkCmdDraw() call, 1000 triangles\n"
+		"      per strip, attributeless):               ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessInputIndicesTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+				cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}),
+
+	Test(
+		"   VS max throughput for indexed triangle strip, VertexIndex and InstanceIndex\n"
+		"      used for position output (per-strip vkCmdDrawIndexed() call,\n"
+		"      1000 triangles per strip, monotonically increasing indices,\n"
 		"      attributeless):                          ",
 		Test::Type::VertexThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			beginTest(cb, attributelessInputIndicesTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>());
-			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+				cb.drawIndexed(2+maxTriStripLength, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}),
+
+	Test(
+		"   VS max throughput for primitive restart indexed triangle strip,\n"
+		"      VertexIndex and InstanceIndex used for position output\n"
+		"      (single per-scene vkCmdDrawIndexed() call, 1000 triangles per strip\n"
+		"      followed by -1, monotonically increasing indices,\n"
+		"      attributeless):                          ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessInputIndicesPrimitiveRestartPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			uint32_t numIndicesPerStrip = maxTriStripLength+3;
+			uint32_t numStrips = numTriangles/maxTriStripLength;
+			cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
 		}),
 
@@ -2046,7 +2153,7 @@ static void initTests()
 		"      quaternion rotation (vec4)) read from the same index in the buffer,\n"
 		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			sharedVertexPerformanceText,
@@ -2079,7 +2186,7 @@ static void initTests()
 		"      in the buffer, 2x uniform matrix (mat4+mat4),\n"
 		"      packed attributes (2x uvec4)\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			indexedSharedVertexPerformanceText,
@@ -2110,7 +2217,7 @@ static void initTests()
 		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			triStripPerformanceText,
@@ -2127,8 +2234,8 @@ static void initTests()
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-				for(uint32_t i=0,e=(numTriangles/vertexStripLength)*(2+vertexStripLength); i<e; i+=2+vertexStripLength)
-					for(uint32_t j=i,je=i+vertexStripLength; j<je; j+=n)
+				for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+					for(uint32_t j=i,je=i+maxTriStripLength; j<je; j+=n)
 						cb.draw(n+2, 1, j, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 				endTest(cb, timestampIndex);
 			}
@@ -2142,7 +2249,7 @@ static void initTests()
 		"      from the same index in the buffer, 2x uniform matrix (mat4+mat4),\n"
 		"      packed attributes (2x uvec4),\n"
 		"      simplified FS that just uses all inputs: ";
-	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,vertexStripLength}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			indexedTriStripPerformanceText,
@@ -2160,8 +2267,8 @@ static void initTests()
 				          bufferAndUniformPipelineLayout.get(), timestampIndex,
 				          vector<vk::Buffer>{ stripPackedAttribute1.get(), stripPackedAttribute2.get() },
 				          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-				for(uint32_t i=0,e=(numTriangles/vertexStripLength)*(2+vertexStripLength); i<e; i+=2+vertexStripLength)
-					for(uint32_t j=i,je=i+vertexStripLength; j<je; j+=n)
+				for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+					for(uint32_t j=i,je=i+maxTriStripLength; j<je; j+=n)
 						cb.drawIndexed(n+2, 1, j, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 				endTest(cb, timestampIndex);
 			}
@@ -2175,7 +2282,7 @@ static void initTests()
 		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 		"      no fragments produced:                   ";
-	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
+	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			primitiveRestartPerformanceText,
@@ -2217,7 +2324,7 @@ static void initTests()
 		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 		"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 		"      no fragments produced:                   ";
-	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by vertexStripLength (1000 by default) with reminder zero
+	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
 			primitiveRestartPerStripDrawCallPerformanceText,
@@ -2447,8 +2554,8 @@ static void initTests()
 			          bufferAndUniformPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>{ sameVertexPackedAttribute1.get(), sameVertexPackedAttribute2.get() },
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
-			for(uint32_t i=0,e=(numTriangles/vertexStripLength)*(2+vertexStripLength); i<e; i+=2+vertexStripLength)
-				cb.draw(2+vertexStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+				cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
 		}
 	);
@@ -3039,17 +3146,20 @@ static size_t getStripIndexPrimitiveRestartBufferSize(uint32_t numStrips, uint32
 
 static void generateStripPrimitiveRestartIndices(uint32_t* indices, uint32_t numStrips, uint32_t numTrianglesInStrip, uint32_t numMinusOnesBetweenStrips = 1)
 {
-	if(vertexStripLength % numTrianglesInStrip != 0)
+	if(maxTriStripLength % numTrianglesInStrip != 0)
 		throw runtime_error("generateStripPrimitiveRestartIndices(): numTrianglesInStrip must match "
-		                    "vertexStripLength in a way to be able to generate all the strips of the same "
+		                    "maxTriStripLength in a way to be able to generate all the strips of the same "
 		                    "length without no excessive small strip at the end.");
 
+	uint32_t numStripsInBigStrip = maxTriStripLength / numTrianglesInStrip;
+	uint32_t numBigStrips = numStrips / numStripsInBigStrip;
+	uint32_t numIndicesInStrip = numTrianglesInStrip + numMinusOnesBetweenStrips;
+	uint32_t numIndicesInBigStrip = numIndicesInStrip * numStripsInBigStrip;
 	size_t idx = 0;
-	uint32_t stripIndices = numTrianglesInStrip + 2 + numMinusOnesBetweenStrips;
-	uint32_t parts = numStrips/vertexStripLength;
+	uint32_t i = 0;
 
-	for(uint32_t j=0; j<parts; j++) {
-		for(uint32_t i=j*(vertexStripLength+2),e=i+vertexStripLength; i<e;) { 
+	for(uint32_t k=0; k<numBigStrips; k++) {
+		for(uint32_t j=0; j<numStripsInBigStrip; j++) {
 			for(uint32_t k=0; k<numTrianglesInStrip; k++)
 				indices[idx++] = i + k;
 			indices[idx++] = i + numTrianglesInStrip;
@@ -3058,7 +3168,10 @@ static void generateStripPrimitiveRestartIndices(uint32_t* indices, uint32_t num
 				indices[idx++] = -1;
 			i += numTrianglesInStrip;
 		}
+		i += 2;
 	}
+
+	assert(i == numBigStrips*((numStripsInBigStrip*numTrianglesInStrip)+2) && "This should not happen.");
 }
 
 
@@ -5015,7 +5128,11 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	colorImageView.reset();
 	depthImageView.reset();
 	attributelessConstantOutputPipeline.reset();
+	attributelessConstantOutputTriStripPipeline.reset();
+	attributelessConstantOutputPrimitiveRestartPipeline.reset();
 	attributelessInputIndicesPipeline.reset();
+	attributelessInputIndicesTriStripPipeline.reset();
+	attributelessInputIndicesPrimitiveRestartPipeline.reset();
 	coordinateAttributePipeline.reset();
 	coordinate4BufferPipeline.reset();
 	coordinate3BufferPipeline.reset();
@@ -5542,12 +5659,56 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
 		               });
+	attributelessConstantOutputTriStripPipeline=
+		createPipeline(attributelessConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
+		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
+			               vk::PipelineVertexInputStateCreateFlags(),  // flags
+			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
+			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
+		               },
+		               nullptr,
+		               &triangleStripInputAssemblyState);
+	attributelessConstantOutputPrimitiveRestartPipeline=
+		createPipeline(attributelessConstantOutputVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
+		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
+			               vk::PipelineVertexInputStateCreateFlags(),  // flags
+			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
+			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
+		               },
+		               nullptr,
+		               &(const vk::PipelineInputAssemblyStateCreateInfo&)vk::PipelineInputAssemblyStateCreateInfo{
+			               vk::PipelineInputAssemblyStateCreateFlags(),  // flags
+			               vk::PrimitiveTopology::eTriangleStrip,  // topology
+			               VK_TRUE  // primitiveRestartEnable
+		               });
 	attributelessInputIndicesPipeline=
 		createPipeline(attributelessInputIndicesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
 		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
 			               vk::PipelineVertexInputStateCreateFlags(),  // flags
 			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
 			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
+		               });
+	attributelessInputIndicesTriStripPipeline=
+		createPipeline(attributelessInputIndicesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
+		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
+			               vk::PipelineVertexInputStateCreateFlags(),  // flags
+			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
+			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
+		               },
+		               nullptr,
+		               &triangleStripInputAssemblyState);
+	attributelessInputIndicesPrimitiveRestartPipeline=
+		createPipeline(attributelessInputIndicesVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent,
+		               &(const vk::PipelineVertexInputStateCreateInfo&)vk::PipelineVertexInputStateCreateInfo{
+			               vk::PipelineVertexInputStateCreateFlags(),  // flags
+			               0,nullptr,  // vertexBindingDescriptionCount,pVertexBindingDescriptions
+			               0,nullptr   // vertexAttributeDescriptionCount,pVertexAttributeDescriptions
+		               },
+		               nullptr,
+		               &(const vk::PipelineInputAssemblyStateCreateInfo&)vk::PipelineInputAssemblyStateCreateInfo{
+			               vk::PipelineInputAssemblyStateCreateFlags(),  // flags
+			               vk::PrimitiveTopology::eTriangleStrip,  // topology
+			               VK_TRUE  // primitiveRestartEnable
 		               });
 	coordinateAttributePipeline=
 		createPipeline(coordinateAttributeVS.get(),constantColorFS.get(),simplePipelineLayout.get(),framebufferExtent);
@@ -6470,7 +6631,7 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	size_t fourInterleavedBuffersSize=size_t(numTriangles)*3*64; // ~192MB
 	size_t indexBufferSize=size_t(numTriangles)*3*4;
 	size_t primitiveRestartIndexBufferSize=size_t(numTriangles)*4*4;
-	size_t stripIndexBufferSize=getIndexBufferSize(numTriangles/vertexStripLength,vertexStripLength);
+	size_t stripIndexBufferSize=getIndexBufferSize(numTriangles/maxTriStripLength,maxTriStripLength);
 	size_t stripPrimitiveRestart3IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/1, 1);
 	size_t stripPrimitiveRestart4IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/2, 2);
 	size_t stripPrimitiveRestart7IndexBufferSize=getStripIndexPrimitiveRestartBufferSize(numTriangles/5, 5);
@@ -6481,8 +6642,8 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	size_t minusOneIndexBufferSize=size_t(numTriangles)*sizeof(uint32_t);
 	size_t zeroIndexBufferSize=size_t(numTriangles)*sizeof(uint32_t)*3;
 	size_t plusOneIndexBufferSize=size_t(numTriangles)*sizeof(uint32_t)*3;
-	size_t stripPackedDataBufferSize=getBufferSize(numTriangles/vertexStripLength,vertexStripLength,true);
-	size_t sharedVertexPackedDataBufferSize=getBufferSizeForSharedVertexTriangles(numTriangles/vertexStripLength,vertexStripLength,true);
+	size_t stripPackedDataBufferSize=getBufferSize(numTriangles/maxTriStripLength,maxTriStripLength,true);
+	size_t sharedVertexPackedDataBufferSize=getBufferSizeForSharedVertexTriangles(numTriangles/maxTriStripLength,maxTriStripLength,true);
 	size_t sameVertexPackedDataBufferSize=size_t(numTriangles)*3*16; // ~48MB
 	createBuffer(coordinate4Attribute,coordinate4AttributeMemory,coordinate4BufferSize,true,vk::BufferUsageFlagBits::eVertexBuffer |vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	createBuffer(coordinate4Buffer,   coordinate4BufferMemory,   coordinate4BufferSize,true,vk::BufferUsageFlagBits::eStorageBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
@@ -6882,7 +7043,7 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 
 	// stripIndex
 	stripIndexStagingBuffer.map();
-	generateStripIndices(reinterpret_cast<uint32_t*>(stripIndexStagingBuffer.ptr), numTriangles/vertexStripLength, vertexStripLength);
+	generateStripIndices(reinterpret_cast<uint32_t*>(stripIndexStagingBuffer.ptr), numTriangles/maxTriStripLength, maxTriStripLength);
 	stripIndexStagingBuffer.unmap();
 
 	// stripPrimitiveRestartIndex
@@ -6919,8 +7080,8 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 
 	// stripPackedAttributes
 	generateStrips(
-		reinterpret_cast<float*>(stripPackedAttribute1StagingBuffer.map()),numTriangles/vertexStripLength,
-		vertexStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
+		reinterpret_cast<float*>(stripPackedAttribute1StagingBuffer.map()),numTriangles/maxTriStripLength,
+		maxTriStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
 		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=stripPackedDataBufferSize/4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(stripPackedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
@@ -6944,8 +7105,8 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 
 	// sharedVertexPackedAttributes
 	generateSharedVertexTriangles(
-		reinterpret_cast<float*>(sharedVertexPackedAttribute1StagingBuffer.map()),numTriangles/vertexStripLength,
-		vertexStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
+		reinterpret_cast<float*>(sharedVertexPackedAttribute1StagingBuffer.map()),numTriangles/maxTriStripLength,
+		maxTriStripLength,triangleSize,framebufferExtent.width,framebufferExtent.height,true,
 		2./framebufferExtent.width,2./framebufferExtent.height,-1.,-1.);
 	for(size_t i=3,e=sharedVertexPackedDataBufferSize/4; i<e; i+=4)
 		reinterpret_cast<uint32_t*>(sharedVertexPackedAttribute1StagingBuffer.ptr)[i]=0x3c003c00; // two half-floats, both set to one
