@@ -23,7 +23,7 @@ static const uint32_t appVersion = VK_MAKE_VERSION(0,99,1);
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
 static constexpr const double longTestTime = 60.;
 static constexpr const double standardTestTime = 2.;
-static constexpr const uint32_t numTrianglesStandard = uint32_t(500*1e3);
+static constexpr const uint32_t numTrianglesStandard = uint32_t(1000*1e3);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(100*1e3);
 static constexpr const uint32_t numTrianglesCpu = uint32_t(10*1e3);
 static constexpr const uint32_t numTrianglesMinimal = 2000;  // two times maxTriStripLength
@@ -409,6 +409,7 @@ static float timestampPeriod_ns=0;
 static uint32_t numTriangles;
 static bool minimalTest=false;
 static bool longTest=false;
+static bool runAllTests=false;
 static bool debug=false;
 static vk::Extent2D framebufferExtent(0,0);
 static size_t sameDMatrixStagingBufferSize;
@@ -734,9 +735,10 @@ static void endTest(vk::CommandBuffer cb, uint32_t& timestampIndex)
 
 static void initTests()
 {
-	tests = {
+	tests.clear();
+	tests.reserve(200);
 
-	Test(
+	tests.emplace_back(
 		"   Test just to warm up GPU. The test shall be invisible to the user.",
 		Test::Type::WarmUp,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -748,9 +750,10 @@ static void initTests()
 			cb.draw(3*numTriangles,1,0,0);
 			cb.draw(3*numTriangles,1,0,0);
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   VS max throughput for triangle list (single per-scene vkCmdDraw() call,\n"
 		"      attributeless, constant VS output):      ",
 		Test::Type::VertexThroughput,
@@ -761,9 +764,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   VS max throughput for indexed triangle list (single per-scene\n"
 		"      vkCmdDrawIndexed() call, monotonically increasing indices,\n"
 		"      attributeless, constant VS output):      ",
@@ -776,9 +780,28 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
+		"   VS max throughput for indexed triangle list that reuse two indices from\n"
+		"      the previous triangle (single per-scene vkCmdDrawIndexed() call,\n"
+		"      monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::VertexThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(stripIndexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+#if 0 // not needed because it was replaced by the test bellow that uses strips of various lengths
+	tests.emplace_back(
 		"   VS max throughput for triangle strip\n"
 		"      (per-strip vkCmdDraw() call, 1000 triangles per strip,\n"
 		"      attributeless, constant VS output):      ",
@@ -791,9 +814,40 @@ static void initTests()
 			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
 				cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
+#endif
 
-	Test(
+	const char* triStripPerformanceText =
+		"   VS max throughput for triangle strips of various lengths\n"
+		"      (per-strip vkCmdDraw() call, 1 to 1000 triangles per strip,\n"
+		"      attributeless, constant VS output):      ";
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
+
+		tests.emplace_back(
+			triStripPerformanceText,
+			n,
+			[](uint32_t n) {
+				string s = static_cast<stringstream&&>(stringstream() << "         strip length " << n << ": ").str();
+				s.append(28-s.size(), ' ');
+				return s;
+			}(n).c_str(),
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
+			{
+				beginTest(cb, attributelessConstantOutputTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+					for(uint32_t j=i,je=i+maxTriStripLength; j<je; j+=n)
+						cb.draw(n+2, 1, j, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+	}
+
+#if 0 // not needed because it was replaced by the test bellow that uses strips of various lengths
+	tests.emplace_back(
 		"   VS max throughput for indexed triangle strip\n"
 		"      (per-strip vkCmdDrawIndexed() call, 1000 triangles per strip,\n"
 		"      monotonically increasing indices,\n"
@@ -808,9 +862,42 @@ static void initTests()
 			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
 				cb.drawIndexed(2+maxTriStripLength, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
+#endif
 
-	Test(
+	const char* indexedTriStripPerformanceText =
+		"   VS max throughput for indexed triangle strips of various lengths\n"
+		"      (per-strip vkCmdDrawIndexed() call, 1-1000 triangles per strip,\n"
+		"      monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ";
+	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
+
+		tests.emplace_back(
+			indexedTriStripPerformanceText,
+			n,
+			[](uint32_t n) {
+				string s = static_cast<stringstream&&>(stringstream() << "         strip length " << n << ": ").str();
+				s.append(28-s.size(), ' ');
+				return s;
+			}(n).c_str(),
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
+			{
+				cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+				beginTest(cb, attributelessConstantOutputTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+					for(uint32_t j=i,je=i+maxTriStripLength; j<je; j+=n)
+						cb.drawIndexed(n+2, 1, j, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+	}
+
+#if 0 // not needed because it was replaced by the test bellow that uses strips of various lengths
+	tests.emplace_back(
 		"   VS max throughput for primitive restart indexed triangle strip\n"
 		"      (single per-scene vkCmdDrawIndexed() call, 1000 triangles per strip\n"
 		"      followed by -1, monotonically increasing indices,\n"
@@ -826,90 +913,158 @@ static void initTests()
 			uint32_t numStrips = numTriangles/maxTriStripLength;
 			cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
+#endif
 
-	Test(
-		"   VS max throughput for triangle list, VertexIndex and InstanceIndex used for\n"
-		"      position output (single per-scene vkCmdDraw() call,\n"
-		"      attributeless:                           ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}),
+	const char* primitiveRestartPerformanceText =
+		"   VS max throughput for primitive restart indexed triangle strips of various\n"
+		"      lengths (single per-scene vkCmdDrawIndexed() call, 1-1000 triangles per\n"
+		"      strip, each strip finished by -1, monotonically increasing indices,\n"
+		"      attributeless, constant VS output):      ";
+	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
-	Test(
-		"   VS max throughput for indexed triangle list, VertexIndex and InstanceIndex\n"
-		"      used for position output (single per-scene vkCmdDrawIndexed() call,\n"
-		"      monotonically increasing indices,\n"
-		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}),
+		tests.emplace_back(
+			primitiveRestartPerformanceText,
+			n,
+			[](uint32_t n) {
+				string s = static_cast<stringstream&&>(stringstream()
+				           << "         strip length " << n << ": ").str();
+				if(s.size()<28)
+					s.append(28-s.size(), ' ');
+				return s;
+			}(n).c_str(),
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
+			{
+				switch(triPerStrip) {
+				case 1: cb.bindIndexBuffer(stripPrimitiveRestart3IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				case 2: cb.bindIndexBuffer(stripPrimitiveRestart4IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				case 5: cb.bindIndexBuffer(stripPrimitiveRestart7IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				case 8: cb.bindIndexBuffer(stripPrimitiveRestart10IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				case 1000: cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32); break;
+				default: assert(0 && "Unhandled triPerStrip parameter."); return;
+				};
+				beginTest(cb, attributelessConstantOutputPrimitiveRestartPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				uint32_t numIndicesPerStrip = triPerStrip+3;
+				uint32_t numStrips = numTriangles/triPerStrip;
+				cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+	}
 
-	Test(
-		"   VS max throughput for triangle strip, VertexIndex and InstanceIndex\n"
-		"      used for position output (per-strip vkCmdDraw() call, 1000 triangles\n"
-		"      per strip, attributeless):               ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessInputIndicesTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
-				cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}),
+	if(runAllTests) {
 
-	Test(
-		"   VS max throughput for indexed triangle strip, VertexIndex and InstanceIndex\n"
-		"      used for position output (per-strip vkCmdDrawIndexed() call,\n"
-		"      1000 triangles per strip, monotonically increasing indices,\n"
-		"      attributeless):                          ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessInputIndicesTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
-				cb.drawIndexed(2+maxTriStripLength, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}),
+		tests.emplace_back(
+			"   VS max throughput for triangle list, VertexIndex and InstanceIndex used for\n"
+			"      position output (single per-scene vkCmdDraw() call,\n"
+			"      attributeless:                           ",
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+			{
+				beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
 
-	Test(
-		"   VS max throughput for primitive restart indexed triangle strip,\n"
-		"      VertexIndex and InstanceIndex used for position output\n"
-		"      (single per-scene vkCmdDrawIndexed() call, 1000 triangles per strip\n"
-		"      followed by -1, monotonically increasing indices,\n"
-		"      attributeless):                          ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessInputIndicesPrimitiveRestartPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			uint32_t numIndicesPerStrip = maxTriStripLength+3;
-			uint32_t numStrips = numTriangles/maxTriStripLength;
-			cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}),
+		tests.emplace_back(
+			"   VS max throughput for indexed triangle list, VertexIndex and InstanceIndex\n"
+			"      used for position output (single per-scene vkCmdDrawIndexed() call,\n"
+			"      monotonically increasing indices,\n"
+			"      attributeless, constant VS output):      ",
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+			{
+				cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+				beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
 
-	Test(
+		tests.emplace_back(
+			"   VS max throughput for indexed triangle list that reuse two indices from\n"
+			"      the previous triangle, VertexIndex and InstanceIndex used for\n"
+			"      position output (single per-scene vkCmdDrawIndexed() call,\n"
+			"      monotonically increasing indices,\n"
+			"      attributeless, constant VS output):      ",
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+			{
+				cb.bindIndexBuffer(stripIndexBuffer.get(), 0, vk::IndexType::eUint32);
+				beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+
+		tests.emplace_back(
+			"   VS max throughput for triangle strip, VertexIndex and InstanceIndex\n"
+			"      used for position output (per-strip vkCmdDraw() call, 1000 triangles\n"
+			"      per strip, attributeless):               ",
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+			{
+				beginTest(cb, attributelessInputIndicesTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+					cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+
+		tests.emplace_back(
+			"   VS max throughput for indexed triangle strip, VertexIndex and InstanceIndex\n"
+			"      used for position output (per-strip vkCmdDrawIndexed() call,\n"
+			"      1000 triangles per strip, monotonically increasing indices,\n"
+			"      attributeless):                          ",
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+			{
+				cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+				beginTest(cb, attributelessInputIndicesTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
+					cb.drawIndexed(2+maxTriStripLength, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+
+		tests.emplace_back(
+			"   VS max throughput for primitive restart indexed triangle strip,\n"
+			"      VertexIndex and InstanceIndex used for position output\n"
+			"      (single per-scene vkCmdDrawIndexed() call, 1000 triangles per strip\n"
+			"      followed by -1, monotonically increasing indices,\n"
+			"      attributeless):                          ",
+			Test::Type::VertexThroughput,
+			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+			{
+				cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32);
+				beginTest(cb, attributelessInputIndicesPrimitiveRestartPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				          vector<vk::Buffer>(),
+				          vector<vk::DescriptorSet>());
+				uint32_t numIndicesPerStrip = maxTriStripLength+3;
+				uint32_t numStrips = numTriangles/maxTriStripLength;
+				cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+				endTest(cb, timestampIndex);
+			}
+		);
+
+	}
+
+	tests.emplace_back(
 		"   GS max throughput when no output is produced\n"
 		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
@@ -935,9 +1090,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   GS max throughput when single constant triangle is produced\n"
 		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
@@ -963,9 +1119,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   GS max throughput when two constant triangles are produced\n"
 		"      (one draw call, attributeless):          ",
 		Test::Type::VertexThroughput,
@@ -992,9 +1149,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Instancing throughput of vkCmdDraw()\n"
 		"      (one triangle per instance, constant VS output, one draw call,\n"
 		"      attributeless):                          ",
@@ -1006,9 +1164,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3, numTriangles, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Instancing throughput of vkCmdDrawIndexed()\n"
 		"      (one triangle per instance, constant VS output, one draw call,\n"
 		"      attributeless):                          ",
@@ -1021,9 +1180,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.drawIndexed(3, numTriangles, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Instancing throughput of vkCmdDrawIndirect()\n"
 		"      (one triangle per instance, one indirect draw call,\n"
 		"      one indirect record, attributeless:      ",
@@ -1038,9 +1198,10 @@ static void initTests()
 			                1,  // drawCount
 			                sizeof(vk::DrawIndirectCommand));  // stride
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Instancing throughput of vkCmdDrawIndexedIndirect()\n"
 		"      (one triangle per instance, one indirect draw call,\n"
 		"      one indirect record, attributeless:      ",
@@ -1056,9 +1217,10 @@ static void initTests()
 			                       1,  // drawCount
 			                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Draw command throughput\n"
 		"      (per-triangle vkCmdDraw() in command buffer,\n"
 		"      attributeless, constant VS output):      ",
@@ -1071,9 +1233,10 @@ static void initTests()
 			for(uint32_t i=0; i<numTriangles; i++)
 				cb.draw(3, 1, i*3, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Draw indexed command throughput\n"
 		"      (per-triangle vkCmdDrawIndexed() in command buffer,\n"
 		"      attributeless, constant VS output):      ",
@@ -1087,10 +1250,11 @@ static void initTests()
 			for(uint32_t i=0; i<numTriangles; i++)
 				cb.drawIndexed(3, 1, i*3, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
 #if 0 // the tests are probably not needed
-	Test(
+	tests.emplace_back(
 		"   Draw command throughput with vec4 attribute\n"
 		"      (per-triangle vkCmdDraw() in command buffer,\n"
 		"      vec4 coordinate attribute):              ",
@@ -1103,9 +1267,10 @@ static void initTests()
 			for(uint32_t i=0; i<numTriangles; i++)
 				cb.draw(3, 1, i*3, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Draw indexed command throughput with vec4 attribute\n"
 		"      (per-triangle vkCmdDrawIndexed() in command buffer,\n"
 		"      vec4 coordinate attribute):              ",
@@ -1119,10 +1284,12 @@ static void initTests()
 			for(uint32_t i=0; i<numTriangles; i++)
 				cb.drawIndexed(3, 1, i*3, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
+
 #endif
 
-	Test(
+	tests.emplace_back(
 		"   VkDrawIndirectCommand processing throughput\n"
 		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      attributeless):                          ",
@@ -1141,10 +1308,11 @@ static void initTests()
 			else
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
 #if 0 // the test is probably not needed
-	Test(
+	tests.emplace_back(
 		"   VkDrawIndirectCommand processing throughput with vec4 attribute\n"
 		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      vec4 coordiate attribute):               ",
@@ -1162,11 +1330,12 @@ static void initTests()
 			else
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 #endif
 
-	Test((
-		"   VkDrawIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
+	tests.emplace_back(
+		("   VkDrawIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
 		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      attributeless):                          ").c_str(),
 		Test::Type::VertexThroughput,
@@ -1184,9 +1353,10 @@ static void initTests()
 			else
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   VkDrawIndexedIndirectCommand processing throughput\n"
 		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
 		"      call, attributeless):                    ",
@@ -1206,10 +1376,11 @@ static void initTests()
 			else
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
 #if 0 // the test is probably not needed
-	Test(
+	tests.emplace_back(
 		"   VkDrawIndexedIndirectCommand processing throughput with vec4 attribute\n"
 		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
 		"      call, vec4 coordiate attribute):         ",
@@ -1228,11 +1399,12 @@ static void initTests()
 			else
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 #endif
 
-	Test((
-		"   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
+	tests.emplace_back(
+		("   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
 		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
 		"      call, attributeless):                    ").c_str(),
 		Test::Type::VertexThroughput,
@@ -1251,9 +1423,10 @@ static void initTests()
 			else
 				tests[timestampIndex/2].enabled = false;
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   One attribute performance - 1x vec4 attribute\n"
 		"      (attribute used, one draw call):         ",
 		Test::Type::VertexThroughput,
@@ -1264,9 +1437,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   One buffer performance - 1x vec4 buffer\n"
 		"      (1x read in VS, one draw call):          ",
 		Test::Type::VertexThroughput,
@@ -1277,9 +1451,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ coordinate4BufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   One buffer performance - 1x vec3 buffer\n"
 		"      (1x read in VS, one draw call):          ",
 		Test::Type::VertexThroughput,
@@ -1290,9 +1465,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ coordinate3BufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Two attributes performance - 2x vec4 attribute\n"
 		"      (both attributes used):                  ",
 		Test::Type::VertexThroughput,
@@ -1303,9 +1479,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Two buffers performance - 2x vec4 buffer\n"
 		"      (both buffers read in VS):               ",
 		Test::Type::VertexThroughput,
@@ -1316,9 +1493,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ twoBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Two buffers performance - 2x vec3 buffer\n"
 		"      (both buffers read in VS):               ",
 		Test::Type::VertexThroughput,
@@ -1329,9 +1507,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ twoBuffer3DescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Two interleaved attributes performance - 2x vec4\n"
 		"      (2x vec4 attribute fetched from the single buffer in VS\n"
 		"      from consecutive buffer locations:       ",
@@ -1343,9 +1522,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 			
-	Test(
+	tests.emplace_back(
 		"   Two interleaved buffers performance - 2x vec4\n"
 		"      (2x vec4 fetched from the single buffer in VS\n"
 		"      from consecutive buffer locations:       ",
@@ -1357,9 +1537,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ twoInterleavedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Packed buffer performance - 1x buffer using 32-byte struct unpacked\n"
 		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
@@ -1370,9 +1551,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ singlePackedBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Packed attribute performance - 2x uvec4 attribute unpacked\n"
 		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
@@ -1383,9 +1565,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Packed buffer performance - 2x uvec4 buffers unpacked\n"
 		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
@@ -1396,9 +1579,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ twoPackedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Packed buffer performance - 2x buffer using 16-byte struct unpacked\n"
 		"      into position+normal+color+texCoord:     ",
 		Test::Type::VertexThroughput,
@@ -1409,9 +1593,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ twoPackedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Packed buffer performance - 2x buffer using 16-byte struct\n"
 		"      read multiple times and unpacked\n"
 		"      into position+normal+color+texCoord:     ",
@@ -1423,9 +1608,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ twoPackedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Four attributes performance - 4x vec4 attribute\n"
 		"      (all attributes used):                   ",
 		Test::Type::VertexThroughput,
@@ -1437,9 +1623,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Four buffers performance - 4x vec4 buffer\n"
 		"      (all buffers read in VS):                ",
 		Test::Type::VertexThroughput,
@@ -1450,9 +1637,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ fourBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Four buffers performance - 4x vec3 buffer\n"
 		"      (all buffers read in VS):                ",
 		Test::Type::VertexThroughput,
@@ -1463,9 +1651,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ fourBuffer3DescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Four interleaved attributes performance - 4x vec4\n"
 		"      (4x vec4 fetched from the single buffer\n"
 		"      on consecutive locations:                ",
@@ -1477,9 +1666,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Four interleaved buffers performance - 4x vec4\n"
 		"      (4x vec4 fetched from the single buffer\n"
 		"      on consecutive locations:                ",
@@ -1491,9 +1681,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ fourInterleavedBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Four attributes performance - 2x vec4 and 2x uint attribute\n"
 		"      (2x vec4f32 + 2x vec4u8, 2x conversion from vec4u8\n"
 		"      to vec4):                                ",
@@ -1506,9 +1697,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>());
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - one matrix as uniform for all triangles\n"
 		"      (maxtrix read in VS,\n"
 		"      coordinates in vec4 attribute):          ",
@@ -1520,9 +1712,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ oneUniformVSDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - per-triangle matrix in buffer\n"
 		"      (different matrix read for each triangle in VS,\n"
 		"      coordinates in vec4 attribute):          ",
@@ -1534,9 +1727,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - per-triangle matrix in attribute\n"
 		"      (triangles are instanced and each triangle receives a different matrix,\n"
 		"      coordinates in vec4 attribute:           ",
@@ -1549,9 +1743,10 @@ static void initTests()
 			cb.draw(3, numTriangles/2, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			cb.draw(3, numTriangles/2, 3, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - one matrix in buffer for all triangles and 2x uvec4\n"
 		"      packed attributes (each triangle reads matrix from the same place in\n"
 		"      the buffer, attributes unpacked):        ",
@@ -1564,9 +1759,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - per-triangle matrix in the buffer and 2x uvec4 packed\n"
 		"      attributes (each triangle reads a different matrix from a buffer,\n"
 		"      attributes unpacked):                    ",
@@ -1578,9 +1774,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - per-triangle matrix in buffer and 2x uvec4 packed\n"
 		"      buffers (each triangle reads a different matrix from a buffer,\n"
 		"      packed buffers unpacked):                ",
@@ -1592,9 +1789,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ threeBuffersDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - GS reads per-triangle matrix from buffer and 2x uvec4\n"
 		"      packed buffers (each triangle reads a different matrix from a buffer,\n"
 		"      packed buffers unpacked in GS):          ",
@@ -1621,9 +1819,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - per-triangle matrix in buffer and four attributes\n"
 		"      (each triangle reads a different matrix from a buffer,\n"
 		"      4x vec4 attribute):                      ",
@@ -1636,9 +1835,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ sameMatrixBufferDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - 1x per-triangle matrix in buffer, 2x uniform matrix and\n"
 		"      and 2x uvec4 packed attributes (uniform view and projection matrices\n"
 		"      multiplied with per-triangle model matrix and with unpacked attributes of\n"
@@ -1652,9 +1852,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
 		"      3x uniform matrix (mat4+mat4+mat3) and 2x uvec4 packed attributes\n"
 		"      (full position and normal computation with MVP and normal matrices,\n"
@@ -1668,9 +1869,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationFiveMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
 		"      2x non-changing matrix (mat4+mat4) in push constants,\n"
 		"      1x constant matrix (mat3) and 2x uvec4 packed attributes (all\n"
@@ -1700,9 +1902,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer, 2x\n"
 		"      non-changing matrix (mat4+mat4) in specialization constants, 1x constant\n"
 		"      matrix (mat3) defined by VS code and 2x uvec4 packed attributes (all\n"
@@ -1716,9 +1919,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - 2x per-triangle matrix (mat4+mat3) in buffer,\n"
 		"      3x constant matrix (mat4+mat4+mat3) defined by VS code and\n"
 		"      2x uvec4 packed attributes (all matrices and attributes\n"
@@ -1732,9 +1936,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - GS five matrices processing, 2x per-triangle matrix\n"
 		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
 		"      2x uvec4 packed attributes passed through VS (all matrices and\n"
@@ -1762,9 +1967,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Matrix performance - GS five matrices processing, 2x per-triangle matrix\n"
 		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
 		"      2x uvec4 packed data read from buffer in GS (all matrices and attributes\n"
@@ -1792,9 +1998,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and Matrix performance - 2x per-triangle matrix\n"
 		"      in buffer (mat4+mat3), 3x uniform matrix (mat4+mat4+mat3) and\n"
 		"      four attributes (vec4f32+vec3f32+vec4u8+vec2f32),\n"
@@ -1809,9 +2016,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationFiveMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and Matrix performance - 1x per-triangle matrix\n"
 		"      in buffer (mat4), 2x uniform matrix (mat4+mat4) and\n"
 		"      four attributes (vec4f32+vec3f32+vec4u8+vec2f32),\n"
@@ -1826,9 +2034,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and Matrix performance - 1x per-triangle matrix\n"
 		"      in buffer (mat4), 2x uniform matrix (mat4+mat4) and 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
@@ -1840,9 +2049,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and Matrix performance - 1x per-triangle row-major matrix\n"
 		"      in buffer (mat4), 2x uniform not-row-major matrix (mat4+mat4),\n"
 		"      2x uvec4 packed attributes,\n"
@@ -1855,9 +2065,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationThreeMatricesRowMajorDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and Matrix performance - 1x per-triangle mat4x3 matrix\n"
 		"      in buffer, 2x uniform matrix (mat4+mat4) and 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
@@ -1869,9 +2080,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationThreeMatrices4x3DescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and Matrix performance - 1x per-triangle row-major mat4x3\n"
 		"      matrix in buffer, 2x uniform matrix (mat4+mat4), 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
@@ -1884,9 +2096,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationThreeMatrices4x3RowMajorDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - PAT v1 (Position-Attitude-Transform,\n"
 		"      performing translation (vec3) and rotation (quaternion as vec4) using\n"
 		"      implementation 1), PAT is per-triangle 2x vec4 in buffer,\n"
@@ -1900,9 +2113,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - PAT v2 (Position-Attitude-Transform,\n"
 		"      performing translation (vec3) and rotation (quaternion as vec4) using\n"
 		"      implementation 2), PAT is per-triangle 2x vec4 in buffer,\n"
@@ -1916,9 +2130,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - PAT v3 (Position-Attitude-Transform,\n"
 		"      performing translation (vec3) and rotation (quaternion as vec4) using\n"
 		"      implementation 3), PAT is per-triangle 2x vec4 in buffer,\n"
@@ -1932,9 +2147,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - constant single PAT v2 sourced from\n"
 		"      the same index in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4),\n"
 		"      2x uvec4 packed attributes,\n"
@@ -1947,9 +2163,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - indexed draw call, per-triangle PAT v2\n"
 		"      in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4), 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
@@ -1962,9 +2179,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - indexed draw call, constant single\n"
 		"      PAT v2 sourced from the same index in buffer (vec3+vec4),\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
@@ -1979,9 +2197,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - primitive restart, indexed draw call,\n"
 		"      per-triangle PAT v2 in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4),\n"
 		"      2x uvec4 packed attributes,\n"
@@ -1996,9 +2215,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndPATDescriptorSet });
 			cb.drawIndexed(4*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and PAT performance - primitive restart, indexed draw call,\n"
 		"      constant single PAT v2 sourced from the same index in buffer (vec3+vec4),\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
@@ -2013,9 +2233,10 @@ static void initTests()
 			          vector<vk::DescriptorSet>{ transformationTwoMatricesAndSinglePATDescriptorSet });
 			cb.drawIndexed(4*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
 			endTest(cb, timestampIndex);
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and double precision matrix performance - double precision\n"
 		"      per-triangle matrix in buffer (dmat4), double precision per-scene view\n"
 		"      matrix in uniform (dmat4), both matrices converted to single precision\n"
@@ -2045,9 +2266,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and double precision matrix performance - double precision\n"
 		"      per-triangle matrix in buffer (dmat4), double precision per-scene view\n"
 		"      matrix in uniform (dmat4), both matrices multiplied in double precision,\n"
@@ -2077,9 +2299,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and double precision matrix performance - double precision\n"
 		"      per-triangle matrix in buffer (dmat4), double precision per-scene view\n"
 		"      matrix in uniform (dmat4), both matrices multiplied in double precision,\n"
@@ -2109,9 +2332,10 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
+		}
+	);
 
-	Test(
+	tests.emplace_back(
 		"   Textured Phong and double precision matrix performance using GS - double\n"
 		"      precision per-triangle matrix in buffer (dmat4), double precision\n"
 		"      per-scene view matrix in uniform (dmat4), both matrices multiplied in\n"
@@ -2142,8 +2366,8 @@ static void initTests()
 					timestampIndex++      // query
 				);
 			}
-		}),
-	};
+		}
+	);
 
 	const char* sharedVertexPerformanceText =
 		"   Shared vertex performance - strip-like geometry of various lengths,\n"
@@ -2211,7 +2435,7 @@ static void initTests()
 		);
 	}
 
-	const char* triStripPerformanceText =
+	const char* triStripSingleQuat2PerformanceText =
 		"   Triangle strip performance - strips of various lengths,\n"
 		"      per-strip vkCmdDraw() call, textured Phong, constant single\n"
 		"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
@@ -2220,7 +2444,7 @@ static void initTests()
 	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
-			triStripPerformanceText,
+			triStripSingleQuat2PerformanceText,
 			n,
 			[](uint32_t n) {
 				string s = static_cast<stringstream&&>(stringstream() << "         strip length " << n << ": ").str();
@@ -2242,7 +2466,7 @@ static void initTests()
 		);
 	}
 
-	const char* indexedTriStripPerformanceText =
+	const char* indexedTriStripSingleQuat2PerformanceText =
 		"   Indexed triangle strip performance - strips of various lengths,\n"
 		"      per-strip vkCmdDrawIndexed() call, indices just increase for each\n"
 		"      next vertex, textured Phong, constant single PAT v2 (vec3+vec4) read\n"
@@ -2252,7 +2476,7 @@ static void initTests()
 	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
-			indexedTriStripPerformanceText,
+			indexedTriStripSingleQuat2PerformanceText,
 			n,
 			[](uint32_t n) {
 				string s = static_cast<stringstream&&>(stringstream() << "         strip length " << n << ": ").str();
@@ -2275,7 +2499,7 @@ static void initTests()
 		);
 	}
 
-	const char* primitiveRestartPerformanceText =
+	const char* primitiveRestartSingleQuat2PerformanceText =
 		"   Primitive restart performance with single per-scene vkCmdDrawIndexed() call,\n"
 		"      strips of various lengths (1-1000 triangles) each finished by -1,\n"
 		"      rendering as triangle strips, textured Phong, constant single\n"
@@ -2285,7 +2509,7 @@ static void initTests()
 	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
 		tests.emplace_back(
-			primitiveRestartPerformanceText,
+			primitiveRestartSingleQuat2PerformanceText,
 			n,
 			[](uint32_t n) {
 				string s = static_cast<stringstream&&>(stringstream()
