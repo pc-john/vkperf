@@ -26,7 +26,7 @@ static constexpr const double standardTestTime = 2.;
 static constexpr const uint32_t numTrianglesStandard = uint32_t(1000*1e3);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(100*1e3);
 static constexpr const uint32_t numTrianglesCpu = uint32_t(10*1e3);
-static constexpr const uint32_t numTrianglesMinimal = 2000;  // two times maxTriStripLength
+static constexpr const uint32_t numTrianglesMinimal = 3000;  // three times maxTriStripLength; it needs to be at least 3x because we need sameDMatrixStagingBufferSize to be great enough for transfer tests
 static constexpr const uint32_t indirectRecordStride = 32;
 static constexpr const unsigned triangleSize = 0;
 static constexpr const uint32_t maxTriStripLength = 1000;  // length of triangle strip used during various measurements; some tests are splitting it to various lenght strips, while reusing two previous vertices from the previous strip
@@ -644,7 +644,8 @@ struct Test {
 	uint32_t groupVariable;
 	string text;
 	bool enabled = true;
-	enum class Type { WarmUp, VertexThroughput, FragmentThroughput, TransferThroughput };
+	enum class Type { WarmUp, VertexThroughput, AttributesAndBuffers, Transformations,
+	                  FragmentThroughput, TransferThroughput };
 	Type type;
 	union {
 		double numRenderedItems;
@@ -1463,7 +1464,7 @@ static void initTests()
 	tests.emplace_back(
 		"   One attribute performance - 1x vec4 attribute\n"
 		"      (attribute used, one draw call):         ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1477,7 +1478,7 @@ static void initTests()
 	tests.emplace_back(
 		"   One buffer performance - 1x vec4 buffer\n"
 		"      (1x read in VS, one draw call):          ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, coordinate4BufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1491,7 +1492,7 @@ static void initTests()
 	tests.emplace_back(
 		"   One buffer performance - 1x vec3 buffer\n"
 		"      (1x read in VS, one draw call):          ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, coordinate3BufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1505,7 +1506,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Two attributes performance - 2x vec4 attribute\n"
 		"      (both attributes used):                  ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1519,7 +1520,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Two buffers performance - 2x vec4 buffer\n"
 		"      (both buffers read in VS):               ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoBuffersPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
@@ -1533,7 +1534,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Two buffers performance - 2x vec3 buffer\n"
 		"      (both buffers read in VS):               ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoBuffer3Pipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
@@ -1548,7 +1549,7 @@ static void initTests()
 		"   Two interleaved attributes performance - 2x vec4\n"
 		"      (2x vec4 attribute fetched from the single buffer in VS\n"
 		"      from consecutive buffer locations:       ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoInterleavedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1558,12 +1559,12 @@ static void initTests()
 			endTest(cb, timestampIndex);
 		}
 	);
-			
+
 	tests.emplace_back(
 		"   Two interleaved buffers performance - 2x vec4\n"
 		"      (2x vec4 fetched from the single buffer in VS\n"
 		"      from consecutive buffer locations:       ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoInterleavedBuffersPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1577,7 +1578,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Packed buffer performance - 1x buffer using 32-byte struct unpacked\n"
 		"      into position+normal+color+texCoord:     ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, singlePackedBufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1591,7 +1592,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Packed attribute performance - 2x uvec4 attribute unpacked\n"
 		"      into position+normal+color+texCoord:     ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1605,7 +1606,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Packed buffer performance - 2x uvec4 buffers unpacked\n"
 		"      into position+normal+color+texCoord:     ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedBuffersPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
@@ -1619,7 +1620,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Packed buffer performance - 2x buffer using 16-byte struct unpacked\n"
 		"      into position+normal+color+texCoord:     ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedBuffersUsingStructPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
@@ -1634,7 +1635,7 @@ static void initTests()
 		"   Packed buffer performance - 2x buffer using 16-byte struct\n"
 		"      read multiple times and unpacked\n"
 		"      into position+normal+color+texCoord:     ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedBuffersUsingStructSlowPipeline.get(), twoBuffersPipelineLayout.get(), timestampIndex,
@@ -1648,7 +1649,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Four attributes performance - 4x vec4 attribute\n"
 		"      (all attributes used):                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, fourAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1663,7 +1664,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Four buffers performance - 4x vec4 buffer\n"
 		"      (all buffers read in VS):                ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, fourBuffersPipeline.get(), fourBuffersPipelineLayout.get(), timestampIndex,
@@ -1677,7 +1678,7 @@ static void initTests()
 	tests.emplace_back(
 		"   Four buffers performance - 4x vec3 buffer\n"
 		"      (all buffers read in VS):                ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, fourBuffer3Pipeline.get(), fourBuffersPipelineLayout.get(), timestampIndex,
@@ -1692,7 +1693,7 @@ static void initTests()
 		"   Four interleaved attributes performance - 4x vec4\n"
 		"      (4x vec4 fetched from the single buffer\n"
 		"      on consecutive locations:                ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, fourInterleavedAttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1707,7 +1708,7 @@ static void initTests()
 		"   Four interleaved buffers performance - 4x vec4\n"
 		"      (4x vec4 fetched from the single buffer\n"
 		"      on consecutive locations:                ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, fourInterleavedBuffersPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1722,7 +1723,7 @@ static void initTests()
 		"   Four attributes performance - 2x vec4 and 2x uint attribute\n"
 		"      (2x vec4f32 + 2x vec4u8, 2x conversion from vec4u8\n"
 		"      to vec4):                                ",
-		Test::Type::VertexThroughput,
+		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, two4F32Two4U8AttributesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1738,7 +1739,7 @@ static void initTests()
 		"   Matrix performance - one matrix as uniform for all triangles\n"
 		"      (maxtrix read in VS,\n"
 		"      coordinates in vec4 attribute):          ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, singleMatrixUniformPipeline.get(), oneUniformVSPipelineLayout.get(), timestampIndex,
@@ -1753,7 +1754,7 @@ static void initTests()
 		"   Matrix performance - per-triangle matrix in buffer\n"
 		"      (different matrix read for each triangle in VS,\n"
 		"      coordinates in vec4 attribute):          ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, matrixBufferPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1768,7 +1769,7 @@ static void initTests()
 		"   Matrix performance - per-triangle matrix in attribute\n"
 		"      (triangles are instanced and each triangle receives a different matrix,\n"
 		"      coordinates in vec4 attribute:           ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, matrixAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1784,7 +1785,7 @@ static void initTests()
 		"   Matrix performance - one matrix in buffer for all triangles and 2x uvec4\n"
 		"      packed attributes (each triangle reads matrix from the same place in\n"
 		"      the buffer, attributes unpacked):        ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedAttributesAndSingleMatrixPipeline.get(),
@@ -1800,7 +1801,7 @@ static void initTests()
 		"   Matrix performance - per-triangle matrix in the buffer and 2x uvec4 packed\n"
 		"      attributes (each triangle reads a different matrix from a buffer,\n"
 		"      attributes unpacked):                    ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedAttributesAndMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1815,7 +1816,7 @@ static void initTests()
 		"   Matrix performance - per-triangle matrix in buffer and 2x uvec4 packed\n"
 		"      buffers (each triangle reads a different matrix from a buffer,\n"
 		"      packed buffers unpacked):                ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, twoPackedBuffersAndMatrixPipeline.get(), threeBuffersPipelineLayout.get(), timestampIndex,
@@ -1830,7 +1831,7 @@ static void initTests()
 		"   Matrix performance - GS reads per-triangle matrix from buffer and 2x uvec4\n"
 		"      packed buffers (each triangle reads a different matrix from a buffer,\n"
 		"      packed buffers unpacked in GS):          ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -1860,7 +1861,7 @@ static void initTests()
 		"   Matrix performance - per-triangle matrix in buffer and four attributes\n"
 		"      (each triangle reads a different matrix from a buffer,\n"
 		"      4x vec4 attribute):                      ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, fourAttributesAndMatrixPipeline.get(), oneBufferPipelineLayout.get(), timestampIndex,
@@ -1877,7 +1878,7 @@ static void initTests()
 		"      and 2x uvec4 packed attributes (uniform view and projection matrices\n"
 		"      multiplied with per-triangle model matrix and with unpacked attributes of\n"
 		"      position, normal, color and texCoord:    ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, transformationThreeMatricesPipeline.get(),
@@ -1894,7 +1895,7 @@ static void initTests()
 		"      3x uniform matrix (mat4+mat4+mat3) and 2x uvec4 packed attributes\n"
 		"      (full position and normal computation with MVP and normal matrices,\n"
 		"      all matrices and attributes multiplied): ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, transformationFiveMatricesPipeline.get(),
@@ -1911,7 +1912,7 @@ static void initTests()
 		"      2x non-changing matrix (mat4+mat4) in push constants,\n"
 		"      1x constant matrix (mat3) and 2x uvec4 packed attributes (all\n"
 		"      matrices and attributes multiplied):     ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.pushConstants(
@@ -1944,7 +1945,7 @@ static void initTests()
 		"      non-changing matrix (mat4+mat4) in specialization constants, 1x constant\n"
 		"      matrix (mat3) defined by VS code and 2x uvec4 packed attributes (all\n"
 		"      matrices and attributes multiplied):     ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, transformationFiveMatricesSpecializationConstantsPipeline.get(),
@@ -1961,7 +1962,7 @@ static void initTests()
 		"      3x constant matrix (mat4+mat4+mat3) defined by VS code and\n"
 		"      2x uvec4 packed attributes (all matrices and attributes\n"
 		"      multiplied):                             ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, transformationFiveMatricesConstantsPipeline.get(),
@@ -1978,7 +1979,7 @@ static void initTests()
 		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
 		"      2x uvec4 packed attributes passed through VS (all matrices and\n"
 		"      attributes multiplied):                  ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -2009,7 +2010,7 @@ static void initTests()
 		"      (mat4+mat3) in buffer, 3x uniform matrix (mat4+mat4+mat3) and\n"
 		"      2x uvec4 packed data read from buffer in GS (all matrices and attributes\n"
 		"      multiplied):                             ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -2040,7 +2041,7 @@ static void initTests()
 		"      in buffer (mat4+mat3), 3x uniform matrix (mat4+mat4+mat3) and\n"
 		"      four attributes (vec4f32+vec3f32+vec4u8+vec2f32),\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedFourAttributesFiveMatricesPipeline.get(),
@@ -2058,7 +2059,7 @@ static void initTests()
 		"      in buffer (mat4), 2x uniform matrix (mat4+mat4) and\n"
 		"      four attributes (vec4f32+vec3f32+vec4u8+vec2f32),\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedFourAttributesPipeline.get(),
@@ -2075,7 +2076,7 @@ static void initTests()
 		"   Textured Phong and Matrix performance - 1x per-triangle matrix\n"
 		"      in buffer (mat4), 2x uniform matrix (mat4+mat4) and 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2091,7 +2092,7 @@ static void initTests()
 		"      in buffer (mat4), 2x uniform not-row-major matrix (mat4+mat4),\n"
 		"      2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedRowMajorPipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2106,7 +2107,7 @@ static void initTests()
 		"   Textured Phong and Matrix performance - 1x per-triangle mat4x3 matrix\n"
 		"      in buffer, 2x uniform matrix (mat4+mat4) and 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedMat4x3Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2121,7 +2122,7 @@ static void initTests()
 		"   Textured Phong and Matrix performance - 1x per-triangle row-major mat4x3\n"
 		"      matrix in buffer, 2x uniform matrix (mat4+mat4), 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedMat4x3RowMajorPipeline.get(),
@@ -2139,7 +2140,7 @@ static void initTests()
 		"      implementation 1), PAT is per-triangle 2x vec4 in buffer,\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedQuat1Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2156,7 +2157,7 @@ static void initTests()
 		"      implementation 2), PAT is per-triangle 2x vec4 in buffer,\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2173,7 +2174,7 @@ static void initTests()
 		"      implementation 3), PAT is per-triangle 2x vec4 in buffer,\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedQuat3Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2189,7 +2190,7 @@ static void initTests()
 		"      the same index in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4),\n"
 		"      2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, phongTexturedSingleQuat2Pipeline.get(), bufferAndUniformPipelineLayout.get(), timestampIndex,
@@ -2204,7 +2205,7 @@ static void initTests()
 		"   Textured Phong and PAT performance - indexed draw call, per-triangle PAT v2\n"
 		"      in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4), 2x uvec4 packed\n"
 		"      attribute, no fragments produced:        ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2221,7 +2222,7 @@ static void initTests()
 		"      PAT v2 sourced from the same index in buffer (vec3+vec4),\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2239,7 +2240,7 @@ static void initTests()
 		"      per-triangle PAT v2 in buffer (vec3+vec4), 2x uniform matrix (mat4+mat4),\n"
 		"      2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(primitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2257,7 +2258,7 @@ static void initTests()
 		"      constant single PAT v2 sourced from the same index in buffer (vec3+vec4),\n"
 		"      2x uniform matrix (mat4+mat4), 2x uvec4 packed attributes,\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(primitiveRestartIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2277,7 +2278,7 @@ static void initTests()
 		"      before computations, single precision per-scene perspective matrix in\n"
 		"      uniform (mat4), single precision vertex positions, packed attributes\n"
 		"      (2x uvec4), no fragments produced:       ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64) {
@@ -2310,7 +2311,7 @@ static void initTests()
 		"      single precision vertex positions, single precision per-scene\n"
 		"      perspective matrix in uniform (mat4), packed attributes (2x uvec4),\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64) {
@@ -2343,7 +2344,7 @@ static void initTests()
 		"      double precision vertex positions (dvec3), single precision per-scene\n"
 		"      perspective matrix in uniform (mat4), packed attributes (3x uvec4),\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64) {
@@ -2377,7 +2378,7 @@ static void initTests()
 		"      precision per-scene perspective matrix in uniform (mat4), packed\n"
 		"      attributes (3x uvec4),\n"
 		"      no fragments produced:                   ",
-		Test::Type::VertexThroughput,
+		Test::Type::Transformations,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.shaderFloat64 && enabledFeatures.geometryShader) {
@@ -2423,7 +2424,7 @@ static void initTests()
 					s.append(28-s.size(), ' ');
 					return s;
 				}(n).c_str(),
-				Test::Type::VertexThroughput,
+				Test::Type::Transformations,
 				[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 				{
 					beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
@@ -2456,7 +2457,7 @@ static void initTests()
 					s.append(28-s.size(), ' ');
 					return s;
 				}(n).c_str(),
-				Test::Type::VertexThroughput,
+				Test::Type::Transformations,
 				[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 				{
 					cb.bindIndexBuffer(stripIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2487,7 +2488,7 @@ static void initTests()
 					s.append(28-s.size(), ' ');
 					return s;
 				}(n).c_str(),
-				Test::Type::VertexThroughput,
+				Test::Type::Transformations,
 				[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 				{
 					beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
@@ -2519,7 +2520,7 @@ static void initTests()
 					s.append(28-s.size(), ' ');
 					return s;
 				}(n).c_str(),
-				Test::Type::VertexThroughput,
+				Test::Type::Transformations,
 				[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 				{
 					cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2554,7 +2555,7 @@ static void initTests()
 						s.append(28-s.size(), ' ');
 					return s;
 				}(n).c_str(),
-				Test::Type::VertexThroughput,
+				Test::Type::Transformations,
 				[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 				{
 					switch(triPerStrip) {
@@ -2594,7 +2595,7 @@ static void initTests()
 					s.append(28-s.size(), ' ');
 					return s;
 				}(n).c_str(),
-				Test::Type::VertexThroughput,
+				Test::Type::Transformations,
 				[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 				{
 					switch(triPerStrip) {
@@ -2625,7 +2626,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(primitiveRestartMinusOne2IndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2645,7 +2646,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(primitiveRestartMinusOne5IndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2665,7 +2666,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(minusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2685,7 +2686,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2706,7 +2707,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(plusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2726,7 +2727,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2746,7 +2747,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(plusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2766,7 +2767,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2786,7 +2787,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				cb.bindIndexBuffer(plusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -2807,7 +2808,7 @@ static void initTests()
 			"      PAT v2 (vec3+vec4) read from the same index in the buffer,\n"
 			"      2x uniform matrix (mat4+mat4), packed attributes (2x uvec4),\n"
 			"      no fragments produced:                   ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				beginTest(cb, phongTexturedSingleQuat2TriStripPipeline.get(),
@@ -2826,7 +2827,7 @@ static void initTests()
 			"      textured Phong, constant single PAT v2 (vec3+vec4) read from the same\n"
 			"      index in the buffer, 2x uniform matrix (mat4+mat4), packed attributes\n"
 			"      (2x uvec4), no fragments produced:       ",
-			Test::Type::VertexThroughput,
+			Test::Type::Transformations,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 			{
 				beginTest(cb, phongTexturedSingleQuat2Pipeline.get(),
@@ -3039,10 +3040,10 @@ static void initTests()
 			{
 				// compute numTranfers
 				size_t numTransfers = size_t(262144) / transferSize;
+				if(sameDMatrixStagingBufferSize < 262144)
+					numTransfers = min(numTransfers, sameDMatrixStagingBufferSize / transferSize);
 				if(minimalTest && numTransfers > 10)
 					numTransfers = 10;
-				if(sameDMatrixStagingBufferSize < 262144)
-					numTransfers = sameDMatrixStagingBufferSize / transferSize;
 
 				// enable TransferThroughput tests only on each fourth measurement
 				// because they are usually very time consuming
@@ -3168,6 +3169,9 @@ static void initTests()
 	shuffledTests.reserve(tests.size());
 	for(Test& t : tests)
 		shuffledTests.emplace_back(&t);
+	assert(is_sorted(shuffledTests.begin(), shuffledTests.end(),
+	                 [](const Test* t1, const Test* t2){ return int(t1->type) < int(t2->type); }) &&
+	       "Tests are not ordered.");
 }
 
 
@@ -9608,17 +9612,37 @@ static void frame()
 	commandBuffer->resetQueryPool(timestampPool.get(), 0, uint32_t(tests.size())*2);
 
 	// shuffle tests
-	// to run them in different order each time
-	// except the first test doing warm up;
-	// it avoids some problems on Radeons when one test might cause
-	// following test to perform poorly probably because some parts of the GPU are
-	// switched into powersaving states because of not high enough load)
+	// while keeping the same type tests together
 	minstd_rand rnd;
-	shuffle(shuffledTests.begin()+1, shuffledTests.end(), rnd);
+	auto it = shuffledTests.begin();
+	auto e = shuffledTests.end();
+	while(it != e) {
+		auto seqStart = it;
+		it++;
 
-	// record all tests
-	for(size_t j=0,c=tests.size(); j<c; j++)
-		shuffledTests[j]->func(commandBuffer.get(), shuffledTests[j]->timestampIndex, shuffledTests[j]->groupVariable);
+		// continue to the end of the sequence of the same type Tests
+		if(it != e) {
+			Test::Type type = (*seqStart)->type;
+			while(type == (*it)->type) {
+				it++;
+				if(it == e)
+					break;
+			}
+		}
+
+		// shuffle tests
+		// to run them in different order each time
+		// except the first test doing warm up;
+		// it avoids some problems on Radeons when one test might cause
+		// following test to perform poorly probably because some parts of the GPU are
+		// switched into powersaving states because of not high enough load)
+		if((*seqStart)->type != Test::Type::TransferThroughput)
+			shuffle(seqStart, it, rnd);
+
+		// record the tests in the sequence
+		for(auto i=seqStart; i!=it; i++)
+			(*i)->func(commandBuffer.get(), (*i)->timestampIndex, (*i)->groupVariable);
+	}
 
 	// end command buffer
 	commandBuffer->end();
@@ -9992,12 +10016,6 @@ int main(int argc,char** argv)
 			);
 			if(r!=vk::Result::eSuccess)
 				throw std::runtime_error("vkGetQueryPoolResults() did not finish with VK_SUCCESS result.");
-			size_t i=0;
-			for(Test& t : tests) {
-				if(t.enabled)
-					t.renderingTimes.emplace_back(timestamps[i+1]-timestamps[i]);
-				i+=2;
-			}
 
 			// verify that tests did not overlap
 			uint64_t v = 0;
@@ -10011,13 +10029,22 @@ int main(int argc,char** argv)
 					v = timestamps[i+1];
 				}
 
+			// append results
+			size_t i=0;
+			for(Test& t : tests) {
+				if(t.enabled)
+					t.renderingTimes.emplace_back(timestamps[i+1]-timestamps[i]);
+				i+=2;
+			}
+
 			// print the result at the end
 			double totalMeasurementTime=chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
 			if(totalMeasurementTime>((longTest)?longTestTime:standardTestTime)) {
-				cout<<"Triangle throughput:"<<endl;
+
+				cout << "Triangle throughput:" << endl;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
-					if(t.type==Test::Type::VertexThroughput) {
+					if(t.type == Test::Type::VertexThroughput) {
 						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
@@ -10029,11 +10056,44 @@ int main(int argc,char** argv)
 							cout << t.text << " not supported" << endl;
 					}
 				}
-				cout<<"\nFragment throughput:"<<endl;
-				size_t numScreenFragments=size_t(framebufferExtent.width)*framebufferExtent.height;
+
+				cout << "\nAttributes and buffers:" << endl;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
-					if(t.type==Test::Type::FragmentThroughput) {
+					if(t.type == Test::Type::AttributesAndBuffers) {
+						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
+							cout << tests[i].groupText << endl;
+						if(t.enabled) {
+							sort(t.renderingTimes.begin(), t.renderingTimes.end());
+							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+						}
+						else
+							cout << t.text << " not supported" << endl;
+					}
+				}
+
+				cout << "\nTransformations:" << endl;
+				for(size_t i=0; i<tests.size(); i++) {
+					Test& t = tests[i];
+					if(t.type == Test::Type::Transformations) {
+						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
+							cout << tests[i].groupText << endl;
+						if(t.enabled) {
+							sort(t.renderingTimes.begin(), t.renderingTimes.end());
+							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+						}
+						else
+							cout << t.text << " not supported" << endl;
+					}
+				}
+
+				cout << "\nFragment throughput:" << endl;
+				size_t numScreenFragments = size_t(framebufferExtent.width)*framebufferExtent.height;
+				for(size_t i=0; i<tests.size(); i++) {
+					Test& t = tests[i];
+					if(t.type == Test::Type::FragmentThroughput) {
 						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
@@ -10048,11 +10108,12 @@ int main(int argc,char** argv)
 							cout << t.text << " not supported" << endl;
 					}
 				}
-				cout<<"\nTransfer throughput:"<<endl;
+
+				cout << "\nTransfer throughput:" << endl;
 				size_t numTransferTests = 0;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
-					if(t.type==Test::Type::TransferThroughput) {
+					if(t.type == Test::Type::TransferThroughput) {
 						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
 							cout << tests[i].groupText << endl;
 						if(!t.renderingTimes.empty()) {
@@ -10066,7 +10127,10 @@ int main(int argc,char** argv)
 							cout << t.text << "not run" << endl;
 					}
 				}
-				cout << "\nNumber of measurements of vertex and fragment tests: " << tests.front().renderingTimes.size() << endl;
+
+				// print measurement statistics
+				cout << "\nNumber of measurements of vertex, attributes and buffers, transformations,\n"
+				        "   and fragment tests: " << tests.front().renderingTimes.size() << endl;
 				cout << "Number of measurements of transfer tests: " << numTransferTests << endl;
 				cout << "Total time of all measurements: " << totalMeasurementTime << " seconds" << endl;
 				cout << endl;
