@@ -5,6 +5,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -10042,6 +10043,8 @@ int main(int argc,char** argv)
 			if(totalMeasurementTime>((longTest)?longTestTime:standardTestTime)) {
 
 				cout << "Triangle throughput:" << endl;
+				uint64_t renderingTimeSum = 0;
+				size_t triangleTestsNumRounds = 0;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
 					if(t.type == Test::Type::VertexThroughput) {
@@ -10049,15 +10052,20 @@ int main(int argc,char** argv)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
-							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
 							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
+							triangleTestsNumRounds = max(t.renderingTimes.size(), triangleTestsNumRounds);
 						}
 						else
 							cout << t.text << " not supported" << endl;
 					}
 				}
+				double totalTriangleTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
 
 				cout << "\nAttributes and buffers:" << endl;
+				renderingTimeSum = 0;
+				size_t attribAndBufferTestsNumRounds = 0;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
 					if(t.type == Test::Type::AttributesAndBuffers) {
@@ -10065,15 +10073,20 @@ int main(int argc,char** argv)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
-							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
 							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
+							attribAndBufferTestsNumRounds = max(t.renderingTimes.size(), attribAndBufferTestsNumRounds);
 						}
 						else
 							cout << t.text << " not supported" << endl;
 					}
 				}
+				double totalAttribAndBufferTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
 
 				cout << "\nTransformations:" << endl;
+				renderingTimeSum = 0;
+				size_t transformationTestsNumRounds = 0;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
 					if(t.type == Test::Type::Transformations) {
@@ -10081,15 +10094,20 @@ int main(int argc,char** argv)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
-							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
 							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
+							transformationTestsNumRounds = max(t.renderingTimes.size(), transformationTestsNumRounds);
 						}
 						else
 							cout << t.text << " not supported" << endl;
 					}
 				}
+				double totalTransformationTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
 
 				cout << "\nFragment throughput:" << endl;
+				renderingTimeSum = 0;
+				size_t fragmentTestsNumRounds = 0;
 				size_t numScreenFragments = size_t(framebufferExtent.width)*framebufferExtent.height;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
@@ -10098,8 +10116,10 @@ int main(int argc,char** argv)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
-							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
 							cout << t.text << double(numScreenFragments)*t.numRenderedItems/time_ns*1e9/1e9 << " * 1e9 per second" << endl;
+							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
+							fragmentTestsNumRounds = max(t.renderingTimes.size(), fragmentTestsNumRounds);
 						#if 0 // tuning of tests to not take too long
 							cout << "      measurement time: " << time_ns/1e6 << "ms" << endl;
 						#endif
@@ -10108,9 +10128,11 @@ int main(int argc,char** argv)
 							cout << t.text << " not supported" << endl;
 					}
 				}
+				double totalFragmentTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
 
 				cout << "\nTransfer throughput:" << endl;
-				size_t numTransferTests = 0;
+				renderingTimeSum = 0;
+				size_t transferTestsNumRounds = 0;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
 					if(t.type == Test::Type::TransferThroughput) {
@@ -10118,22 +10140,39 @@ int main(int argc,char** argv)
 							cout << tests[i].groupText << endl;
 						if(!t.renderingTimes.empty()) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
-							double time_ns = t.renderingTimes[(t.renderingTimes.size()-1)/2] * timestampPeriod_ns;
+							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
 							cout << t.text << time_ns/t.numTransfers << "ns per transfer ("
 							     << double(t.numTransfers*t.transferSize)/time_ns*1e9/1024/1024/1024 << " GiB/s)" << endl;
-							numTransferTests = t.renderingTimes.size();
+							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
+							transferTestsNumRounds = max(t.renderingTimes.size(), transferTestsNumRounds);
 						}
 						else
 							cout << t.text << "not run" << endl;
 					}
 				}
+				double totalTransferTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
 
 				// print measurement statistics
-				cout << "\nNumber of measurements of vertex, attributes and buffers, transformations,\n"
-				        "   and fragment tests: " << tests.front().renderingTimes.size() << endl;
-				cout << "Number of measurements of transfer tests: " << numTransferTests << endl;
-				cout << "Total time of all measurements: " << totalMeasurementTime << " seconds" << endl;
+				double totalDeviceTestTime = totalTriangleTestsTime + totalAttribAndBufferTestsTime +
+				                             totalTransformationTestsTime + totalFragmentTestsTime +
+				                             totalTransferTestsTime;
+				auto savedPrecision = cout.precision();
+				cout << setprecision(3);
+				cout << "\nMeasurement statistics:\n"
+				        "   Triangle throughput measurement time:  " << totalTriangleTestsTime/1e9 <<
+				        " seconds using " << triangleTestsNumRounds << " test rounds.\n"
+				        "   Attribute and Buffer measurement time: " << totalAttribAndBufferTestsTime/1e9 <<
+				        " seconds using " << attribAndBufferTestsNumRounds << " test rounds.\n"
+				        "   Transformation measurement time:       " << totalTransformationTestsTime/1e9 <<
+				        " seconds using " << transformationTestsNumRounds << " test rounds.\n"
+				        "   Fragment throughput measurement time:  " << totalFragmentTestsTime/1e9 <<
+				        " seconds using " << fragmentTestsNumRounds << " test rounds.\n"
+				        "   Transfer throughput measurement time:  " << totalTransferTestsTime/1e9 <<
+				        " seconds using " << transferTestsNumRounds << " test rounds.\n"
+				        "   Total device time: " << totalDeviceTestTime/1e9 << " seconds.\n"
+				        "   Total real time:   " << totalMeasurementTime << " seconds." << endl;
 				cout << endl;
+				cout << setprecision(savedPrecision);
 
 				// device with sparse memory support
 				vk::UniqueDevice sparseDevice;
