@@ -314,8 +314,9 @@ static vk::UniquePipeline fillrateUniformColor4fPipeline;
 static vk::UniquePipeline fillrateUniformColor4bPipeline;
 static vk::UniquePipeline phongNoSpecularPipeline;
 static vk::UniquePipeline phongNoSpecularSingleUniformPipeline;
-static vk::UniqueCommandPool commandPool;
-static vk::UniqueCommandBuffer commandBuffer;
+static vk::UniqueCommandPool primaryCommandPool;
+static vk::UniqueCommandPool secondaryCommandPool;
+static vk::UniqueCommandBuffer primaryCommandBuffer;
 static vk::UniqueBuffer coordinate4Attribute;
 static vk::UniqueBuffer coordinate4Buffer;
 static vk::UniqueBuffer coordinate3Attribute;
@@ -655,12 +656,37 @@ struct Test {
 	size_t transferSize;
 	typedef void (*Func)(vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t groupVariable);
 	Func func;
+	vk::UniqueCommandBuffer secondaryCommandBuffer;
 	Test(const char* text_, Type t, Func func_) : text(text_), type(t), func(func_)  {}
 	Test(const char* groupText_, uint32_t groupVariable_, const char* text_, Type t, Func func_) : groupText(groupText_), groupVariable(groupVariable_), text(text_), type(t), func(func_)  {}
 };
 
 static vector<Test> tests;
 static vector<Test*> shuffledTests;
+
+
+static void beginRenderPass(vk::CommandBuffer cb)
+{
+	cb.beginRenderPass(
+		vk::RenderPassBeginInfo(
+			renderPass.get(),         // renderPass
+			framebuffer.get(),        // framebuffer
+			vk::Rect2D(vk::Offset2D(0,0),framebufferExtent),  // renderArea
+			2,                        // clearValueCount
+			array<vk::ClearValue,2>{  // pClearValues
+				vk::ClearColorValue(array<float,4>{0.f,0.f,0.f,1.f}),
+				vk::ClearDepthStencilValue(1.f,0)
+			}.data()
+		),
+		vk::SubpassContents::eSecondaryCommandBuffers  // contents
+	);
+}
+
+
+static void endRenderPass(vk::CommandBuffer cb)
+{
+	cb.endRenderPass();
+}
 
 
 static void beginTestBarrier(vk::CommandBuffer cb)
@@ -686,20 +712,6 @@ static void beginTest(
 	vk::CommandBuffer cb, vk::Pipeline pipeline, vk::PipelineLayout pipelineLayout, uint32_t& timestampIndex,
 	const vector<vk::Buffer>& attributes, const vector<vk::DescriptorSet>& descriptorSets)
 {
-	beginTestBarrier(cb);
-	cb.beginRenderPass(
-		vk::RenderPassBeginInfo(
-			renderPass.get(),         // renderPass
-			framebuffer.get(),        // framebuffer
-			vk::Rect2D(vk::Offset2D(0,0),framebufferExtent),  // renderArea
-			2,                        // clearValueCount
-			array<vk::ClearValue,2>{  // pClearValues
-				vk::ClearColorValue(array<float,4>{0.f,0.f,0.f,1.f}),
-				vk::ClearDepthStencilValue(1.f,0)
-			}.data()
-		),
-		vk::SubpassContents::eInline
-	);
 	cb.bindPipeline(vk::PipelineBindPoint::eGraphics,pipeline);  // bind pipeline
 	if(descriptorSets.size()>0)
 		cb.bindDescriptorSets(
@@ -731,7 +743,6 @@ static void endTest(vk::CommandBuffer cb, uint32_t& timestampIndex)
 		timestampPool.get(),  // queryPool
 		timestampIndex++      // query
 	);
-	cb.endRenderPass();
 }
 
 
@@ -3057,7 +3068,6 @@ static void initTests()
 				tests[timestampIndex/2].enabled = testEnabled;
 
 				// record command buffer
-				beginTestBarrier(cb);
 				cb.writeTimestamp(
 					vk::PipelineStageFlagBits::eTopOfPipe,  // pipelineStage
 					timestampPool.get(),  // queryPool
@@ -3173,6 +3183,49 @@ static void initTests()
 	assert(is_sorted(shuffledTests.begin(), shuffledTests.end(),
 	                 [](const Test* t1, const Test* t2){ return int(t1->type) < int(t2->type); }) &&
 	       "Tests are not ordered.");
+}
+
+
+static void recordTests()
+{
+	// create secondary command lists
+	for(Test& t : tests) {
+		t.secondaryCommandBuffer = std::move(
+			device->allocateCommandBuffersUnique(
+				vk::CommandBufferAllocateInfo(
+					secondaryCommandPool.get(),          // commandPool
+					vk::CommandBufferLevel::eSecondary,  // level
+					1   // commandBufferCount
+				)
+			)[0]);
+		t.secondaryCommandBuffer->begin(
+			(t.type != Test::Type::TransferThroughput)
+			?	vk::CommandBufferBeginInfo(
+					vk::CommandBufferUsageFlagBits::eRenderPassContinue,  // flags
+					&(const vk::CommandBufferInheritanceInfo&)vk::CommandBufferInheritanceInfo(  // pInheritanceInfo
+						renderPass.get(),  // renderPass
+						0,  // subpass
+						framebuffer.get(),  // framebuffer
+						VK_FALSE,  // occlusionQueryEnable
+						vk::QueryControlFlags(),  // queryFlags
+						vk::QueryPipelineStatisticFlags()  // pipelineStatistics
+					)
+				)
+			:	vk::CommandBufferBeginInfo(
+					vk::CommandBufferUsageFlags(),  // flags
+					&(const vk::CommandBufferInheritanceInfo&)vk::CommandBufferInheritanceInfo(  // pInheritanceInfo
+						nullptr,  // renderPass
+						0,  // subpass
+						nullptr,  // framebuffer
+						VK_FALSE,  // occlusionQueryEnable
+						vk::QueryControlFlags(),  // queryFlags
+						vk::QueryPipelineStatisticFlags()  // pipelineStatistics
+					)
+				)
+		);
+		t.func(t.secondaryCommandBuffer.get(), t.timestampIndex, t.groupVariable);
+		t.secondaryCommandBuffer->end();
+	}
 }
 
 
@@ -5351,20 +5404,27 @@ cpuInfoSucceed:;
 			)
 		);
 
-	// command pool
-	commandPool=
+	// command pools
+	primaryCommandPool =
 		device->createCommandPoolUnique(
 			vk::CommandPoolCreateInfo(
 				vk::CommandPoolCreateFlagBits::eTransient,  // flags
 				graphicsQueueFamily  // queueFamilyIndex
 			)
 		);
+	secondaryCommandPool =
+		device->createCommandPoolUnique(
+			vk::CommandPoolCreateInfo(
+				vk::CommandPoolCreateFlags(),  // flags
+				graphicsQueueFamily  // queueFamilyIndex
+			)
+		);
 
 	// command buffer
-	commandBuffer=std::move(
+	primaryCommandBuffer = std::move(
 		device->allocateCommandBuffersUnique(
 			vk::CommandBufferAllocateInfo(
-				commandPool.get(),                 // commandPool
+				primaryCommandPool.get(),                 // commandPool
 				vk::CommandBufferLevel::ePrimary,  // level
 				1   // commandBufferCount
 			)
@@ -9603,14 +9663,14 @@ static void frame()
 {
 	// reset command pool
 	// and begin command buffer
-	device->resetCommandPool(commandPool.get(), vk::CommandPoolResetFlags());
-	commandBuffer->begin(
+	device->resetCommandPool(primaryCommandPool.get(), vk::CommandPoolResetFlags());
+	primaryCommandBuffer->begin(
 		vk::CommandBufferBeginInfo(
 			vk::CommandBufferUsageFlagBits::eOneTimeSubmit,  // flags
 			nullptr  // pInheritanceInfo
 		)
 	);
-	commandBuffer->resetQueryPool(timestampPool.get(), 0, uint32_t(tests.size())*2);
+	primaryCommandBuffer->resetQueryPool(timestampPool.get(), 0, uint32_t(tests.size())*2);
 
 	// shuffle tests
 	// while keeping the same type tests together
@@ -9641,18 +9701,24 @@ static void frame()
 			shuffle(seqStart, it, rnd);
 
 		// record the tests in the sequence
-		for(auto i=seqStart; i!=it; i++)
-			(*i)->func(commandBuffer.get(), (*i)->timestampIndex, (*i)->groupVariable);
+		for(auto i=seqStart; i!=it; i++) {
+			beginTestBarrier(primaryCommandBuffer.get());
+			if((*i)->type != Test::Type::TransferThroughput)
+				beginRenderPass(primaryCommandBuffer.get());
+			primaryCommandBuffer->executeCommands((*i)->secondaryCommandBuffer.get());
+			if((*i)->type != Test::Type::TransferThroughput)
+				endRenderPass(primaryCommandBuffer.get());
+		}
 	}
 
 	// end command buffer
-	commandBuffer->end();
+	primaryCommandBuffer->end();
 
 	// submit work
 	graphicsQueue.submit(
 		vk::SubmitInfo(
 			0,nullptr,nullptr,  // waitSemaphoreCount+pWaitSemaphores+pWaitDstStageMask
-			1,&commandBuffer.get(),  // commandBufferCount+pCommandBuffers
+			1,&primaryCommandBuffer.get(),  // commandBufferCount+pCommandBuffers
 			0,nullptr  // signalSemaphoreCount+pSignalSemaphores
 		),
 		fence.get()
@@ -9996,6 +10062,9 @@ int main(int argc,char** argv)
 
 		// recreate swapchain
 		resizeFramebuffer(defaultFramebufferExtent);
+
+		// record tests into secondary command buffers
+		recordTests();
 
 		auto startTime=chrono::steady_clock::now();
 
