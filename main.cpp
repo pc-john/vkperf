@@ -4113,10 +4113,92 @@ osInfoSucceed:;
 		if(!f)  goto cpuInfoFailed;
 		string s{istreambuf_iterator<char>(f), istreambuf_iterator<char>()};
 		if(!f)  goto cpuInfoFailed;
+
+		// parse "model name"
+		// (x86 and x64 processors)
 		regex expr("(?:^|\\n|\\r)[\\t ]*model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		sregex_iterator it(s.begin(), s.end(), expr);
-		if(it == sregex_iterator{})  goto cpuInfoFailed;
-		cout << (*it)[1] << endl;
+		if(it != sregex_iterator{}) {
+			cout << (*it)[1] << endl;
+			goto cpuInfoSucceed;
+		}
+
+		// parse "CPU implementer"
+		// (ARM processors, value is given as hexadecimal number)
+		string cpuImplementer;
+		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ implementer[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+		it = sregex_iterator(s.begin(), s.end(), expr);
+		if(it != sregex_iterator{}) {
+			unsigned i;
+			try {
+				i = stoi((*it)[1].str(), nullptr, 16);
+			} catch(...) {
+				i = 0;
+			}
+			switch(i) {
+				case 0x41: cpuImplementer = "ARM"; break;
+				case 0x42: cpuImplementer = "Broadcom"; break;
+				case 0x43: cpuImplementer = "Cavium"; break;
+				case 0x44: cpuImplementer = "DEC"; break;
+				case 0x46: cpuImplementer = "FUJITSU"; break;
+				case 0x48: cpuImplementer = "HiSilicon"; break;
+				case 0x49: cpuImplementer = "Infineon"; break;
+				case 0x4d: cpuImplementer = "Motorola/Freescale"; break;
+				case 0x4e: cpuImplementer = "NVIDIA"; break;
+				case 0x50: cpuImplementer = "APM"; break;
+				case 0x51: cpuImplementer = "Qualcomm"; break;
+				case 0x53: cpuImplementer = "Samsung"; break;
+				case 0x56: cpuImplementer = "Marvell"; break;
+				case 0x61: cpuImplementer = "Apple"; break;
+				case 0x66: cpuImplementer = "Faraday"; break;
+				case 0x69: cpuImplementer = "Intel"; break;
+				case 0x70: cpuImplementer = "Phytium"; break;
+				case 0xc0: cpuImplementer = "Ampere"; break;
+				default:   cpuImplementer = (*it).str();
+			}
+		}
+
+		// parse "CPU architecture"
+		// (ARM processors, value is given as decimal number)
+		string cpuArchitecture;
+		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+		it = sregex_iterator(s.begin(), s.end(), expr);
+		if(it != sregex_iterator{})
+			cpuArchitecture = (*it)[1];
+
+		// parse "CPU variant"
+		string cpuVariant;
+		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ variant[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+		it = sregex_iterator(s.begin(), s.end(), expr);
+		if(it != sregex_iterator{})
+			cpuVariant = (*it)[1];
+
+		// parse "CPU part"
+		string cpuPart;
+		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ part[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+		it = sregex_iterator(s.begin(), s.end(), expr);
+		if(it != sregex_iterator{})
+			cpuPart = (*it)[1];
+
+		// parse "CPU revision"
+		string cpuRevision;
+		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ revision[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+		it = sregex_iterator(s.begin(), s.end(), expr);
+		if(it != sregex_iterator{})
+			cpuRevision = (*it)[1];
+
+		if(!cpuImplementer.empty() || !cpuArchitecture.empty() || !cpuVariant.empty() ||
+		   !cpuPart.empty() || !cpuRevision.empty())
+		{
+			cout << "\n   Implementer:  " << cpuImplementer
+			     << "\n   Architecture: " << cpuArchitecture
+			     << "\n   Variant:      " << cpuVariant
+			     << "\n   Part:         " << cpuPart
+			     << "\n   Revision:     " << cpuRevision << endl;
+			goto cpuInfoSucceed;
+		}
+
+		goto cpuInfoFailed;
 	}
 	goto cpuInfoSucceed;
 cpuInfoFailed:
@@ -10322,8 +10404,8 @@ int main(int argc,char** argv)
 				}
 				else {
 					cout<<"Graphics memory page size: Could not be retrieved."<<endl;
-					cout<<"   No sparse memory support. Further measurements will report\n"
-					      "   results like the graphics memory page size would be 64KiB."<<endl;
+					cout<<"   No sparse memory support. Further measurements will expect\n"
+					      "   the graphics memory page size to be 64KiB."<<endl;
 					sparseBlockSize=65536;
 					memoryBlockSize=65536;
 					memoryBlockSize=~0xffff;
