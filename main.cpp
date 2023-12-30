@@ -12,6 +12,8 @@
 #ifdef _WIN32
 # include <windows.h>
 # include <intrin.h>
+#else
+# include <set>
 #endif
 #include <vulkan/vulkan.hpp>
 
@@ -4091,6 +4093,7 @@ osInfoSucceed:;
 	}
 #else
 	{
+		// read OS info from /etc/lsb-release
 		ifstream f("/etc/lsb-release");
 		if(!f)  goto osInfoFailed;
 		string s{istreambuf_iterator<char>(f), istreambuf_iterator<char>()};
@@ -4107,14 +4110,16 @@ osInfoSucceed:;
 osInfoFailed:
 	cout << "< unknown, non-Windows >" << endl;
 osInfoSucceed:;
+
 	cout << "Processor:  ";
 	{
+		// open /proc/cpuinfo
 		ifstream f("/proc/cpuinfo");
 		if(!f)  goto cpuInfoFailed;
 		string s{istreambuf_iterator<char>(f), istreambuf_iterator<char>()};
 		if(!f)  goto cpuInfoFailed;
 
-		// parse "model name"
+		// parse "model name" from /proc/cpuinfo
 		// (x86 and x64 processors)
 		regex expr("(?:^|\\n|\\r)[\\t ]*model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		sregex_iterator it(s.begin(), s.end(), expr);
@@ -4123,8 +4128,9 @@ osInfoSucceed:;
 			goto cpuInfoSucceed;
 		}
 
-		// try lscpu
-		std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("lscpu", "r"), pclose);
+		// try to execute lscpu
+		// and parse its output
+		std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("lscpu 2>&1", "r"), pclose);
 		if(pipe) {
 			string architecture;
 			string vendorID;
@@ -4132,7 +4138,7 @@ osInfoSucceed:;
 			string maxMHz;
 			int numSockets = 1;
 			int numCoresPerSocket = 1;
-			regex architectureRegEx(/*"(?:^|\\n|\\r)*/"[\\t ]*ArchItectUre[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex architectureRegEx(/*"(?:^|\\n|\\r)*/"[\\t ]*Architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex vendorIdRegEx("(?:^|\\n|\\r)[\\t ]*Vendor\\ ID[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex modelNameRegEx("(?:^|\\n|\\r)[\\t ]*Model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex maxMHzRegEx("(?:^|\\n|\\r)[\\t ]*CPU\\ max\\ MHz[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
@@ -4197,79 +4203,135 @@ osInfoSucceed:;
 			}
 		}
 
-		// parse "CPU implementer"
+		// parse "CPU implementer" from /proc/cpuinfo
 		// (ARM processors, value is given as hexadecimal number)
-		string cpuImplementer;
+		set<int> implementers;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ implementer[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
-		it = sregex_iterator(s.begin(), s.end(), expr);
-		if(it != sregex_iterator{}) {
-			unsigned i;
+		for(it = sregex_iterator(s.begin(), s.end(), expr);
+		    it != sregex_iterator{}; it++)
+		{
+			int i;
 			try {
 				i = stoi((*it)[1].str(), nullptr, 16);
 			} catch(...) {
 				i = 0;
 			}
-			switch(i) {
-				case 0x41: cpuImplementer = "ARM"; break;
-				case 0x42: cpuImplementer = "Broadcom"; break;
-				case 0x43: cpuImplementer = "Cavium"; break;
-				case 0x44: cpuImplementer = "DEC"; break;
-				case 0x46: cpuImplementer = "FUJITSU"; break;
-				case 0x48: cpuImplementer = "HiSilicon"; break;
-				case 0x49: cpuImplementer = "Infineon"; break;
-				case 0x4d: cpuImplementer = "Motorola/Freescale"; break;
-				case 0x4e: cpuImplementer = "NVIDIA"; break;
-				case 0x50: cpuImplementer = "APM"; break;
-				case 0x51: cpuImplementer = "Qualcomm"; break;
-				case 0x53: cpuImplementer = "Samsung"; break;
-				case 0x56: cpuImplementer = "Marvell"; break;
-				case 0x61: cpuImplementer = "Apple"; break;
-				case 0x66: cpuImplementer = "Faraday"; break;
-				case 0x69: cpuImplementer = "Intel"; break;
-				case 0x70: cpuImplementer = "Phytium"; break;
-				case 0xc0: cpuImplementer = "Ampere"; break;
-				default:   cpuImplementer = (*it).str();
-			}
+			implementers.emplace(i);
 		}
 
-		// parse "CPU architecture"
+		// parse "CPU architecture" from /proc/cpuinfo
 		// (ARM processors, value is given as decimal number)
-		string cpuArchitecture;
+		set<string> architectures;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
-		it = sregex_iterator(s.begin(), s.end(), expr);
-		if(it != sregex_iterator{})
-			cpuArchitecture = (*it)[1];
+		for(it = sregex_iterator(s.begin(), s.end(), expr);
+		    it != sregex_iterator{}; it++)
+		{
+			architectures.emplace((*it)[1]);
+		}
 
-		// parse "CPU variant"
-		string cpuVariant;
+		// parse "CPU variant" from /proc/cpuinfo
+		set<string> variants;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ variant[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
-		it = sregex_iterator(s.begin(), s.end(), expr);
-		if(it != sregex_iterator{})
-			cpuVariant = (*it)[1];
+		for(it = sregex_iterator(s.begin(), s.end(), expr);
+		    it != sregex_iterator{}; it++)
+		{
+			variants.emplace((*it)[1]);
+		}
 
-		// parse "CPU part"
-		string cpuPart;
+		// parse "CPU part" from /proc/cpuinfo
+		set<string> parts;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ part[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
-		it = sregex_iterator(s.begin(), s.end(), expr);
-		if(it != sregex_iterator{})
-			cpuPart = (*it)[1];
+		for(it = sregex_iterator(s.begin(), s.end(), expr);
+		    it != sregex_iterator{}; it++)
+		{
+			parts.emplace((*it)[1]);
+		}
 
-		// parse "CPU revision"
-		string cpuRevision;
+		// parse "CPU revision" from /proc/cpuinfo
+		set<string> revisions;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ revision[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
-		it = sregex_iterator(s.begin(), s.end(), expr);
-		if(it != sregex_iterator{})
-			cpuRevision = (*it)[1];
+		for(it = sregex_iterator(s.begin(), s.end(), expr);
+		    it != sregex_iterator{}; it++)
+		{
+			revisions.emplace((*it)[1]);
+		}
 
 		// print info based on /proc/cpuinfo
-		if(!cpuImplementer.empty() || !cpuArchitecture.empty() || !cpuVariant.empty() ||
-		   !cpuPart.empty() || !cpuRevision.empty())
+		if(!implementers.empty() || !architectures.empty() || !variants.empty() ||
+		   !parts.empty() || !revisions.empty())
 		{
-			cout << "\n   Implementer:  " << cpuImplementer
-			     << "\n   Architecture: " << cpuArchitecture
-			     << "\n   Variant:      " << cpuVariant
-			     << "\n   Part:         " << cpuPart
-			     << "\n   Revision:     " << cpuRevision << endl;
+			cout << "\n   Implementer:  ";
+			if(implementers.empty())
+				cout << "< unknown >";
+			else {
+				auto implementerToString =
+					[](int implementer) -> string {
+						switch(implementer) {
+							case 0x41: return "ARM";
+							case 0x42: return "Broadcom";
+							case 0x43: return "Cavium";
+							case 0x44: return "DEC";
+							case 0x46: return "FUJITSU";
+							case 0x48: return "HiSilicon";
+							case 0x49: return "Infineon";
+							case 0x4d: return "Motorola/Freescale";
+							case 0x4e: return "NVIDIA";
+							case 0x50: return "APM";
+							case 0x51: return "Qualcomm";
+							case 0x53: return "Samsung";
+							case 0x56: return "Marvell";
+							case 0x61: return "Apple";
+							case 0x66: return "Faraday";
+							case 0x69: return "Intel";
+							case 0x70: return "Phytium";
+							case 0xc0: return "Ampere";
+							case 0x00: return "< unknown >";
+							default:   return move((ostringstream() << showbase << hex << implementer).str());
+						}
+					};
+				auto it = implementers.begin();
+				cout << implementerToString(*it);
+				for(it++; it!=implementers.end(); it++)
+					cout << ", " << implementerToString(*it);
+			}
+			cout << "\n   Architecture: ";
+			if(architectures.empty())
+				cout << "< unknown >";
+			else {
+				auto it = architectures.begin();
+				cout << *it;
+				for(it++; it!=architectures.end(); it++)
+					cout << ", " << *it;
+			}
+			cout << "\n   Variant:      ";
+			if(variants.empty())
+				cout << "< unknown >";
+			else {
+				auto it = variants.begin();
+				cout << *it;
+				for(it++; it!=variants.end(); it++)
+					cout << ", " << *it;
+			}
+			cout << "\n   Part:         ";
+			if(parts.empty())
+				cout << "< unknown >";
+			else {
+				auto it = parts.begin();
+				cout << *it;
+				for(it++; it!=parts.end(); it++)
+					cout << ", " << *it;
+			}
+			cout << "\n   Revision:     ";
+			if(revisions.empty())
+				cout << "< unknown >";
+			else {
+				auto it = revisions.begin();
+				cout << *it;
+				for(it++; it!=revisions.end(); it++)
+					cout << ", " << *it;
+			}
+			cout << endl;
+
 			goto cpuInfoSucceed;
 		}
 
