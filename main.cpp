@@ -4286,7 +4286,7 @@ osInfoSucceed:;
 							case 0x70: return "Phytium";
 							case 0xc0: return "Ampere";
 							case 0x00: return "< unknown >";
-							default:   return move((ostringstream() << showbase << hex << implementer).str());
+							default:   return static_cast<stringstream&&>(ostringstream() << showbase << hex << implementer).str();
 						}
 					};
 				auto it = implementers.begin();
