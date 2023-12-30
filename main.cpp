@@ -4123,6 +4123,80 @@ osInfoSucceed:;
 			goto cpuInfoSucceed;
 		}
 
+		// try lscpu
+		std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("lscpu", "r"), pclose);
+		if(pipe) {
+			string architecture;
+			string vendorID;
+			string modelName;
+			string maxMHz;
+			int numSockets = 1;
+			int numCoresPerSocket = 1;
+			regex architectureRegEx(/*"(?:^|\\n|\\r)*/"[\\t ]*ArchItectUre[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex vendorIdRegEx("(?:^|\\n|\\r)[\\t ]*Vendor\\ ID[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex modelNameRegEx("(?:^|\\n|\\r)[\\t ]*Model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex maxMHzRegEx("(?:^|\\n|\\r)[\\t ]*CPU\\ max\\ MHz[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex socketsRegEx("(?:^|\\n|\\r)[\\t ]*Socket\\(s\\)[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex coresPerSocketRegEx("(?:^|\\n|\\r)[\\t ]*Core\\(s\\)\\ per\\ socket[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			array<char,192> b;
+			while (fgets(b.data(), b.size(), pipe.get()) != nullptr) {
+				auto it = cregex_iterator(b.begin(), b.end(), architectureRegEx);
+				if(it != cregex_iterator{}) {
+					architecture = (*it)[1];
+					continue;
+				}
+				it = cregex_iterator(b.begin(), b.end(), vendorIdRegEx);
+				if(it != cregex_iterator{}) {
+					vendorID = (*it)[1];
+					continue;
+				}
+				it = cregex_iterator(b.begin(), b.end(), modelNameRegEx);
+				if(it != cregex_iterator{}) {
+					if(!architecture.empty()) {
+						cout << "\n   Architecture: " << architecture
+						     << "\n   Vendor ID:    " << vendorID;
+						architecture.clear();
+						vendorID.clear();
+					}
+					if(modelName.empty())
+						cout << "\n   Core(s):      ";
+					else {
+						cout << numSockets*numCoresPerSocket << "x " << modelName << " (" << maxMHz << "MHz), ";
+						numSockets = 1;
+						numCoresPerSocket = 1;
+						maxMHz.clear();
+					}
+					modelName = (*it)[1];
+					continue;
+				}
+				it = cregex_iterator(b.begin(), b.end(), maxMHzRegEx);
+				if(it != cregex_iterator{}) {
+					maxMHz = (*it)[1];
+					continue;
+				}
+				it = cregex_iterator(b.begin(), b.end(), socketsRegEx);
+				if(it != cregex_iterator{}) {
+					try {
+						numSockets = stoi((*it)[1].str(), nullptr, 10);
+					} catch(...) {
+					}
+					continue;
+				}
+				it = cregex_iterator(b.begin(), b.end(), coresPerSocketRegEx);
+				if(it != cregex_iterator{}) {
+					try {
+						numCoresPerSocket = stoi((*it)[1].str(), nullptr, 10);
+					} catch(...) {
+					}
+					continue;
+				}
+			}
+			if(!modelName.empty()) {
+				cout << numSockets*numCoresPerSocket << "x " << modelName << " (" << maxMHz << "MHz)" << endl;
+				goto cpuInfoSucceed;
+			}
+		}
+
 		// parse "CPU implementer"
 		// (ARM processors, value is given as hexadecimal number)
 		string cpuImplementer;
@@ -4187,6 +4261,7 @@ osInfoSucceed:;
 		if(it != sregex_iterator{})
 			cpuRevision = (*it)[1];
 
+		// print info based on /proc/cpuinfo
 		if(!cpuImplementer.empty() || !cpuArchitecture.empty() || !cpuVariant.empty() ||
 		   !cpuPart.empty() || !cpuRevision.empty())
 		{
