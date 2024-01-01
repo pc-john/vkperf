@@ -4136,50 +4136,89 @@ osInfoSucceed:;
 			string vendorID;
 			string modelName;
 			string maxMHz;
+			float maxMHzFloat = 0.f;
+			float bogoMIPS = 0;
 			int numSockets = 1;
 			int numCoresPerSocket = 1;
+			vector<tuple<float,float,string>> coreInfoList;
 			regex architectureRegEx(/*"(?:^|\\n|\\r)*/"[\\t ]*Architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex vendorIdRegEx("(?:^|\\n|\\r)[\\t ]*Vendor\\ ID[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex modelNameRegEx("(?:^|\\n|\\r)[\\t ]*Model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex maxMHzRegEx("(?:^|\\n|\\r)[\\t ]*CPU\\ max\\ MHz[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex bogoMipsRegEx("(?:^|\\n|\\r)[\\t ]*BogoMIPS[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex socketsRegEx("(?:^|\\n|\\r)[\\t ]*Socket\\(s\\)[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex coresPerSocketRegEx("(?:^|\\n|\\r)[\\t ]*Core\\(s\\)\\ per\\ socket[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			array<char,192> b;
 			while (fgets(b.data(), b.size(), pipe.get()) != nullptr) {
+
+				// parse architecture
 				auto it = cregex_iterator(b.begin(), b.end(), architectureRegEx);
 				if(it != cregex_iterator{}) {
 					architecture = (*it)[1];
 					continue;
 				}
+
+				// parse vendor ID
 				it = cregex_iterator(b.begin(), b.end(), vendorIdRegEx);
 				if(it != cregex_iterator{}) {
 					vendorID = (*it)[1];
 					continue;
 				}
+
+				// parse model name
 				it = cregex_iterator(b.begin(), b.end(), modelNameRegEx);
 				if(it != cregex_iterator{}) {
+
+					// print global cpu info
 					if(!architecture.empty()) {
 						cout << "\n   Architecture: " << architecture
 						     << "\n   Vendor ID:    " << vendorID;
 						architecture.clear();
 						vendorID.clear();
 					}
-					if(modelName.empty())
-						cout << "\n   Core(s):      ";
-					else {
-						cout << numSockets*numCoresPerSocket << "x " << modelName << " (" << maxMHz << "MHz), ";
+
+					if(!modelName.empty())
+					{
+						// store previous core info into cpuInfoList
+						coreInfoList.emplace_back(bogoMIPS, maxMHzFloat,
+							static_cast<ostringstream&&>(ostringstream() << numSockets*numCoresPerSocket << "x "
+								<< modelName << " (" << maxMHz << "MHz)").str());
+
+						// reset variables
 						numSockets = 1;
 						numCoresPerSocket = 1;
 						maxMHz.clear();
+						maxMHzFloat = 0.f;
+						bogoMIPS = 0.f;
 					}
+
+					// set current core name
 					modelName = (*it)[1];
 					continue;
 				}
+
+				// parse max MHz
 				it = cregex_iterator(b.begin(), b.end(), maxMHzRegEx);
 				if(it != cregex_iterator{}) {
 					maxMHz = (*it)[1];
+					try {
+						maxMHzFloat = stof((*it)[1].str(), nullptr);
+					} catch(...) {
+					}
 					continue;
 				}
+
+				// parse bogo mips
+				it = cregex_iterator(b.begin(), b.end(), bogoMipsRegEx);
+				if(it != cregex_iterator{}) {
+					try {
+						bogoMIPS = stof((*it)[1].str(), nullptr);
+					} catch(...) {
+					}
+					continue;
+				}
+
+				// parse number of sockets
 				it = cregex_iterator(b.begin(), b.end(), socketsRegEx);
 				if(it != cregex_iterator{}) {
 					try {
@@ -4188,6 +4227,8 @@ osInfoSucceed:;
 					}
 					continue;
 				}
+
+				// parse cores per socket
 				it = cregex_iterator(b.begin(), b.end(), coresPerSocketRegEx);
 				if(it != cregex_iterator{}) {
 					try {
@@ -4197,11 +4238,33 @@ osInfoSucceed:;
 					continue;
 				}
 			}
-			if(!modelName.empty()) {
-				cout << numSockets*numCoresPerSocket << "x " << modelName << " (" << maxMHz << "MHz)" << endl;
-				goto cpuInfoSucceed;
-			}
+
+			if(modelName.empty())
+				goto lscpuFailed;
+
+			// store last cpu info into cpuInfoList
+			coreInfoList.emplace_back(bogoMIPS, maxMHzFloat,
+				static_cast<ostringstream&&>(ostringstream() << numSockets*numCoresPerSocket << "x "
+					<< modelName << " (" << maxMHz << "MHz)").str());
+
+			// sort by performance
+			sort(coreInfoList.begin(), coreInfoList.end(),
+					[](const tuple<float,float,string>& lhs, const tuple<float,float,string>& rhs) -> bool {
+						if(std::get<0>(lhs) > std::get<0>(rhs))  return true;
+						if(std::get<0>(lhs) < std::get<0>(rhs))  return false;
+						return std::get<1>(lhs) > std::get<1>(rhs);
+					});
+
+			// print core info
+			cout << "\n   Core(s):      ";
+			auto it = coreInfoList.begin();
+			cout << std::get<2>(*it);
+			for(it++; it!=coreInfoList.end(); it++)
+				cout << ", " << std::get<2>(*it);
+			cout << '\n';
+			goto cpuInfoSucceed;
 		}
+		lscpuFailed:
 
 		// parse "CPU implementer" from /proc/cpuinfo
 		// (ARM processors, value is given as hexadecimal number)
