@@ -4130,7 +4130,7 @@ osInfoSucceed:;
 
 		// try to execute lscpu
 		// and parse its output
-		std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("lscpu 2>&1", "r"), pclose);
+		std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("LC_ALL=C lscpu 2>&1", "r"), pclose);
 		if(pipe) {
 			string architecture;
 			string vendorID;
@@ -4286,7 +4286,7 @@ osInfoSucceed:;
 							case 0x70: return "Phytium";
 							case 0xc0: return "Ampere";
 							case 0x00: return "< unknown >";
-							default:   return static_cast<stringstream&&>(ostringstream() << showbase << hex << implementer).str();
+							default:   return static_cast<ostringstream&&>(ostringstream() << showbase << hex << implementer).str();
 						}
 					};
 				auto it = implementers.begin();
