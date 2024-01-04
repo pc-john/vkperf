@@ -22,7 +22,7 @@ using namespace std;
 
 // constants
 static const string appName = "vkperf";
-static const uint32_t appVersion = VK_MAKE_VERSION(0,99,2);
+static const uint32_t appVersion = VK_MAKE_VERSION(0,99,3);
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
 static constexpr const double longTestTime = 60.;
 static constexpr const double standardTestTime = 2.;
@@ -4141,7 +4141,7 @@ osInfoSucceed:;
 			int numSockets = 1;
 			int numCoresPerSocket = 1;
 			vector<tuple<float,float,string>> coreInfoList;
-			regex architectureRegEx(/*"(?:^|\\n|\\r)*/"[\\t ]*Architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
+			regex architectureRegEx("(?:^|\\n|\\r)[\\t ]*Architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex vendorIdRegEx("(?:^|\\n|\\r)[\\t ]*Vendor\\ ID[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex modelNameRegEx("(?:^|\\n|\\r)[\\t ]*Model\\ name[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex maxMHzRegEx("(?:^|\\n|\\r)[\\t ]*CPU\\ max\\ MHz[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
@@ -4149,7 +4149,8 @@ osInfoSucceed:;
 			regex socketsRegEx("(?:^|\\n|\\r)[\\t ]*Socket\\(s\\)[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			regex coresPerSocketRegEx("(?:^|\\n|\\r)[\\t ]*Core\\(s\\)\\ per\\ socket[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 			array<char,192> b;
-			while (fgets(b.data(), b.size(), pipe.get()) != nullptr) {
+			while(memset(b.data(), b.size(), 0),
+			      fgets(b.data(), b.size(), pipe.get()) != nullptr) {
 
 				// parse architecture
 				auto it = cregex_iterator(b.begin(), b.end(), architectureRegEx);
@@ -4266,9 +4267,10 @@ osInfoSucceed:;
 		}
 		lscpuFailed:
 
+
 		// parse "CPU implementer" from /proc/cpuinfo
 		// (ARM processors, value is given as hexadecimal number)
-		set<int> implementers;
+		multiset<int> implementers;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ implementer[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		for(it = sregex_iterator(s.begin(), s.end(), expr);
 		    it != sregex_iterator{}; it++)
@@ -4284,7 +4286,7 @@ osInfoSucceed:;
 
 		// parse "CPU architecture" from /proc/cpuinfo
 		// (ARM processors, value is given as decimal number)
-		set<string> architectures;
+		multiset<string> architectures;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ architecture[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		for(it = sregex_iterator(s.begin(), s.end(), expr);
 		    it != sregex_iterator{}; it++)
@@ -4293,7 +4295,7 @@ osInfoSucceed:;
 		}
 
 		// parse "CPU variant" from /proc/cpuinfo
-		set<string> variants;
+		multiset<string> variants;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ variant[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		for(it = sregex_iterator(s.begin(), s.end(), expr);
 		    it != sregex_iterator{}; it++)
@@ -4302,7 +4304,7 @@ osInfoSucceed:;
 		}
 
 		// parse "CPU part" from /proc/cpuinfo
-		set<string> parts;
+		multiset<string> parts;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ part[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		for(it = sregex_iterator(s.begin(), s.end(), expr);
 		    it != sregex_iterator{}; it++)
@@ -4311,7 +4313,7 @@ osInfoSucceed:;
 		}
 
 		// parse "CPU revision" from /proc/cpuinfo
-		set<string> revisions;
+		multiset<string> revisions;
 		expr = regex("(?:^|\\n|\\r)[\\t ]*CPU\\ revision[\\t ]*\\:[\\t ]*([^\\r\\n:]*)", std::regex_constants::icase);
 		for(it = sregex_iterator(s.begin(), s.end(), expr);
 		    it != sregex_iterator{}; it++)
@@ -4327,6 +4329,7 @@ osInfoSucceed:;
 			if(implementers.empty())
 				cout << "< unknown >";
 			else {
+
 				auto implementerToString =
 					[](int implementer) -> string {
 						switch(implementer) {
@@ -4352,47 +4355,86 @@ osInfoSucceed:;
 							default:   return static_cast<ostringstream&&>(ostringstream() << showbase << hex << implementer).str();
 						}
 					};
+
 				auto it = implementers.begin();
-				cout << implementerToString(*it);
+				auto current = it;
+				size_t count = 1;
 				for(it++; it!=implementers.end(); it++)
-					cout << ", " << implementerToString(*it);
+					if(*it == *current)
+						count++;
+					else
+						goto multipleResults;
+
+				// single result
+				cout << implementerToString(*current);
+				goto resultsPrintingDone;
+
+				// multiple results
+			multipleResults:
+				cout << count << "x " << implementerToString(*current);
+				current = it;
+				count = 1;
+				for(it++; it!=implementers.end(); it++)
+					if(*it == *current)
+						count++;
+					else {
+						cout << ", " << count << "x " << implementerToString(*current);
+						current = it;
+						count = 1;
+					}
+				cout << ", " << count << "x " << implementerToString(*current);
+			resultsPrintingDone:;
 			}
+
+			/** Prints multiset content.
+			 *
+			 *  If it contains only one value or single value multiple times, it prints one value only.
+			 *  If it contains multiple values, it prints number of occurences and value content.
+			 */
+			auto smartPrintMultiset =
+				[](const multiset<string>& m)
+				{
+					if(m.empty())
+						cout << "< unknown >";
+					else {
+						auto it = m.begin();
+						auto current = it;
+						size_t count = 1;
+						for(it++; it!=m.end(); it++)
+							if(*it == *current)
+								count++;
+							else
+								goto multipleResults;
+
+						// single result
+						cout << *current;
+						return;
+
+						// multiple results
+					multipleResults:
+						cout << count << "x " << *current;
+						current = it;
+						count = 1;
+						for(it++; it!=m.end(); it++)
+							if(*it == *current)
+								count++;
+							else {
+								cout << ", " << count << "x " << *current;
+								current = it;
+								count = 1;
+							}
+						cout << ", " << count << "x " << *current;
+					}
+				};
+
 			cout << "\n   Architecture: ";
-			if(architectures.empty())
-				cout << "< unknown >";
-			else {
-				auto it = architectures.begin();
-				cout << *it;
-				for(it++; it!=architectures.end(); it++)
-					cout << ", " << *it;
-			}
+			smartPrintMultiset(architectures);
 			cout << "\n   Variant:      ";
-			if(variants.empty())
-				cout << "< unknown >";
-			else {
-				auto it = variants.begin();
-				cout << *it;
-				for(it++; it!=variants.end(); it++)
-					cout << ", " << *it;
-			}
+			smartPrintMultiset(variants);
 			cout << "\n   Part:         ";
-			if(parts.empty())
-				cout << "< unknown >";
-			else {
-				auto it = parts.begin();
-				cout << *it;
-				for(it++; it!=parts.end(); it++)
-					cout << ", " << *it;
-			}
+			smartPrintMultiset(parts);
 			cout << "\n   Revision:     ";
-			if(revisions.empty())
-				cout << "< unknown >";
-			else {
-				auto it = revisions.begin();
-				cout << *it;
-				for(it++; it!=revisions.end(); it++)
-					cout << ", " << *it;
-			}
+			smartPrintMultiset(revisions);
 			cout << endl;
 
 			goto cpuInfoSucceed;
