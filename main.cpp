@@ -30,6 +30,8 @@ static constexpr const uint32_t numTrianglesStandard = uint32_t(1000*1e3);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(100*1e3);
 static constexpr const uint32_t numTrianglesCpu = uint32_t(10*1e3);
 static constexpr const uint32_t numTrianglesMinimal = 3000;  // three times maxTriStripLength; it needs to be at least 3x because we need sameDMatrixStagingBufferSize to be great enough for transfer tests
+static constexpr const size_t transferAmountPerTest = 4*1048576;  // Nvidia needs this to be at least 2MiB, otherwise transfer speeds rise up many times over PCIe transfer speeds (even 100GiB/s on PCIe 3.0!). Seen on Quadro RTX 3000 and 536.45 drivers.
+static constexpr const size_t maxTransfersPerTest = 10000;
 static constexpr const uint32_t indirectRecordStride = 32;
 static constexpr const unsigned triangleSize = 0;
 static constexpr const uint32_t maxTriStripLength = 1000;  // length of triangle strip used during various measurements; some tests are splitting it to various lenght strips, while reusing two previous vertices from the previous strip
@@ -3030,13 +3032,11 @@ static void initTests()
 
 	vector<uint32_t> transferSizeList;
 	if(minimalTest)
-		transferSizeList = { 4, 32 };
-	else if(longTest)
+		transferSizeList = { 4, 65536 };
+	else
 		transferSizeList = { 4, 4, 8, 16, 32, 64, 128, 256, 512, 1024,
 		                     2048, 4096, 8192, 16384, 32768, 65536,
-		                     131072, 262144 };
-	else
-		transferSizeList = { 4, 32, 256, 2048, 65536 };
+		                     131072, 262144, 524288, 1048576, 2097152 };
 
 	const char* consecutiveTransfersText =
 		"   Transfer of consecutive blocks:";
@@ -3053,21 +3053,18 @@ static void initTests()
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t transferSize)
 			{
 				// compute numTranfers
-				size_t numTransfers = size_t(262144) / transferSize;
-				if(sameDMatrixStagingBufferSize < 262144)
-					numTransfers = min(numTransfers, sameDMatrixStagingBufferSize / transferSize);
+				size_t numTransfers = transferAmountPerTest / transferSize;
+				if(numTransfers > maxTransfersPerTest)
+					numTransfers = maxTransfersPerTest;
+				if(numTransfers*transferSize > sameDMatrixStagingBufferSize)
+					numTransfers = sameDMatrixStagingBufferSize / transferSize;
 				if(minimalTest && numTransfers > 10)
 					numTransfers = 10;
-
-				// enable TransferThroughput tests only on each fourth measurement
-				// because they are usually very time consuming
-				bool testEnabled = numTransfers > 0 &&
-				                   (tests.front().renderingTimes.size() & 0x3) == 0;
 
 				// set test params
 				tests[timestampIndex/2].numTransfers = numTransfers;
 				tests[timestampIndex/2].transferSize = transferSize;
-				tests[timestampIndex/2].enabled = testEnabled;
+				tests[timestampIndex/2].enabled = numTransfers > 0;
 
 				// record command buffer
 				cb.writeTimestamp(
@@ -3076,21 +3073,19 @@ static void initTests()
 					timestampIndex++      // query
 				);
 
-				if(testEnabled) {
-					for(size_t offset=0, endOffset=transferSize*numTransfers;
-						offset<endOffset; offset+=transferSize)
-					{
-						cb.copyBuffer(
-							sameDMatrixStagingBuffer.get(),  // srcBuffer
-							sameDMatrixBuffer.get(),         // dstBuffer
-							1,                               // regionCount
-							&(const vk::BufferCopy&)vk::BufferCopy(  // pRegions
-								offset,  // srcOffset
-								offset,  // dstOffset
-								transferSize  // size
-							)
-						);
-					}
+				for(size_t offset=0, endOffset=transferSize*numTransfers;
+					offset<endOffset; offset+=transferSize)
+				{
+					cb.copyBuffer(
+						sameDMatrixStagingBuffer.get(),  // srcBuffer
+						sameDMatrixBuffer.get(),         // dstBuffer
+						1,                               // regionCount
+						&(const vk::BufferCopy&)vk::BufferCopy(  // pRegions
+							offset,  // srcOffset
+							offset,  // dstOffset
+							transferSize  // size
+						)
+					);
 				}
 
 				cb.writeTimestamp(
@@ -3117,21 +3112,18 @@ static void initTests()
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t transferSize)
 			{
 				// compute numTranfers
-				size_t numTransfers = size_t(262144) / transferSize;
+				size_t numTransfers = transferAmountPerTest / transferSize;
+				if(numTransfers > maxTransfersPerTest)
+					numTransfers = maxTransfersPerTest;
+				if(numTransfers*transferSize*2 > sameDMatrixStagingBufferSize)
+					numTransfers = sameDMatrixStagingBufferSize / (transferSize*2);
 				if(minimalTest && numTransfers > 10)
 					numTransfers = 10;
-				if(sameDMatrixStagingBufferSize < 262144*2)
-					numTransfers = sameDMatrixStagingBufferSize / transferSize / 2;
-
-				// enable TransferThroughput tests only on each fourth measurement
-				// because they are usually very time consuming
-				bool testEnabled = numTransfers > 0 &&
-				                   (tests.front().renderingTimes.size() & 0x3) == 0;
 
 				// set test params
 				tests[timestampIndex/2].numTransfers = numTransfers;
 				tests[timestampIndex/2].transferSize = transferSize;
-				tests[timestampIndex/2].enabled = testEnabled;
+				tests[timestampIndex/2].enabled = numTransfers > 0;
 
 				// record command buffer
 				beginTestBarrier(cb);
@@ -3141,21 +3133,19 @@ static void initTests()
 					timestampIndex++      // query
 				);
 
-				if(testEnabled) {
-					for(size_t offset=0, endOffset=numTransfers*transferSize*2;
-						offset<endOffset; offset+=size_t(transferSize)*2)
-					{
-						cb.copyBuffer(
-							sameDMatrixStagingBuffer.get(),  // srcBuffer
-							sameDMatrixBuffer.get(),         // dstBuffer
-							1,                               // regionCount
-							&(const vk::BufferCopy&)vk::BufferCopy(  // pRegions
-								offset,  // srcOffset
-								offset,  // dstOffset
-								transferSize  // size
-							)
-						);
-					}
+				for(size_t offset=0, endOffset=numTransfers*transferSize*2;
+					offset<endOffset; offset+=size_t(transferSize)*2)
+				{
+					cb.copyBuffer(
+						sameDMatrixStagingBuffer.get(),  // srcBuffer
+						sameDMatrixBuffer.get(),         // dstBuffer
+						1,                               // regionCount
+						&(const vk::BufferCopy&)vk::BufferCopy(  // pRegions
+							offset,  // srcOffset
+							offset,  // dstOffset
+							transferSize  // size
+						)
+					);
 				}
 
 				cb.writeTimestamp(
