@@ -30,7 +30,7 @@ static constexpr const uint32_t numTrianglesStandard = uint32_t(1000*1e3);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(100*1e3);
 static constexpr const uint32_t numTrianglesCpu = uint32_t(10*1e3);
 static constexpr const uint32_t numTrianglesMinimal = 3000;  // three times maxTriStripLength; it needs to be at least 3x because we need sameDMatrixStagingBufferSize to be great enough for transfer tests
-static constexpr const size_t transferAmountPerTest = 4*1048576;  // Nvidia needs this to be at least 2MiB, otherwise transfer speeds rise up many times over PCIe transfer speeds (even 100GiB/s on PCIe 3.0!). Seen on Quadro RTX 3000 and 536.45 drivers.
+static constexpr const size_t transferAmountPerTest = 2*1048576;
 static constexpr const size_t maxTransfersPerTest = 10000;
 static constexpr const uint32_t indirectRecordStride = 32;
 static constexpr const unsigned triangleSize = 0;
@@ -669,7 +669,8 @@ static vector<Test> tests;
 static vector<Test*> shuffledTests;
 
 
-static void beginRenderPass(vk::CommandBuffer cb)
+static void beginRenderPass(vk::CommandBuffer cb,
+	vk::SubpassContents subpassContents = vk::SubpassContents::eSecondaryCommandBuffers)
 {
 	cb.beginRenderPass(
 		vk::RenderPassBeginInfo(
@@ -682,7 +683,7 @@ static void beginRenderPass(vk::CommandBuffer cb)
 				vk::ClearDepthStencilValue(1.f,0)
 			}.data()
 		),
-		vk::SubpassContents::eSecondaryCommandBuffers  // contents
+		subpassContents  // contents
 	);
 }
 
@@ -10022,6 +10023,15 @@ static void frame()
 			primaryCommandBuffer->executeCommands((*i)->secondaryCommandBuffer.get());
 			if((*i)->type != Test::Type::TransferThroughput)
 				endRenderPass(primaryCommandBuffer.get());
+			else {
+				// transfer tests need some "work" between the transfers
+				// (Nvidia was showing very high transfer rates without it on some cards like GF4090)
+				beginTestBarrier(primaryCommandBuffer.get());
+				beginRenderPass(primaryCommandBuffer.get(), vk::SubpassContents::eInline);
+				primaryCommandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, attributelessConstantOutputPipeline.get());  // bind pipeline
+				primaryCommandBuffer->draw(3, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+				endRenderPass(primaryCommandBuffer.get());
+			}
 		}
 	}
 
