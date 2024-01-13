@@ -7334,7 +7334,7 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	createBuffer(sameVertexPackedAttribute2,  sameVertexPackedAttribute2Memory,  sameVertexPackedDataBufferSize,  true,vk::BufferUsageFlagBits::eVertexBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	double totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
 	if(debug) {
-		cout<<"First buffer and memory set"<<endl;
+		cout<<"First set of buffer and memory objects:"<<endl;
 		cout<<"   Creation time: "<<totalMeasurementTime*1000<<"ms"<<endl;
 	}
 
@@ -8168,7 +8168,7 @@ static void resizeFramebuffer(vk::Extent2D newExtent)
 	createBuffer(indirectIndexedStrideBuffer,  indirectIndexedStrideBufferMemory,  size_t(numTriangles)*max(sizeof(vk::DrawIndexedIndirectCommand),size_t(indirectRecordStride)),true,vk::BufferUsageFlagBits::eIndirectBuffer|vk::BufferUsageFlagBits::eTransferDst,bindInfoList);
 	if(debug) {
 		totalMeasurementTime=chrono::duration<double>(chrono::high_resolution_clock::now()-startTime).count();
-		cout<<"Second buffer and memory set"<<endl;
+		cout<<"Second set of buffer and memory objects:"<<endl;
 		cout<<"   Creation time: "<<totalMeasurementTime*1000<<"ms"<<endl;
 #if 0
 		cout<<"Second buffer set memory requirements: "<<(transformationMatrix4x4BufferSize+
@@ -10372,7 +10372,7 @@ int main(int argc,char** argv)
 			        "   --sparse-residency - sparse residency mode is used during the main test\n"
 			        "   --sparse-residency-aliased - sparse residency aliased mode is used\n"
 			        "                                during the main test\n"
-			        "   --debug or -d - print additional debug info\n"
+			        "   --debug - print additional debug info\n"
 			        "   --help or -h - prints the usage information" << endl;
 			exit(99);
 		}
@@ -10632,6 +10632,7 @@ int main(int argc,char** argv)
 					}
 				}
 
+#if 0 // tests of buffer and memory allocation performance works to some extent but it needs to be cleaned to be fully functional
 				// print memory alignment
 				cout<<"Graphics memory allocation properties"<<endl;
 				cout<<"Standard buffer alignment:  "
@@ -10706,6 +10707,7 @@ int main(int argc,char** argv)
 					device.swap(sparseDevice);
 				}
 				cout<<endl;
+#endif
 
 				break;
 			}
