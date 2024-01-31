@@ -22,7 +22,7 @@ using namespace std;
 
 // constants
 static const string appName = "vkperf";
-static const uint32_t appVersion = VK_MAKE_VERSION(0,99,3);
+static const uint32_t appVersion = VK_MAKE_VERSION(0,99,5);
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
 static constexpr const double longTestTime = 60.;
 static constexpr const double standardTestTime = 2.;
@@ -650,18 +650,20 @@ struct Test {
 	uint32_t groupVariable;
 	string text;
 	bool enabled = true;
-	enum class Type { WarmUp, VertexThroughput, AttributesAndBuffers, Transformations,
-	                  FragmentThroughput, TransferThroughput };
+	enum class Type { WarmUp, TriangleThroughput, VertexAndGeometryShader,
+	                  AttributesAndBuffers, Transformations, FragmentThroughput, TransferThroughput };
 	Type type;
 	union {
-		double numRenderedItems;
-		size_t numTransfers;
+		size_t invocationsMultiplier;  // used in VertexAndGeometryShader tests
+		double numRenderedItems;  // used in FragmentThroughput tests
+		size_t numTransfers;  // used in TransferThroughput tests
 	};
 	size_t transferSize;
 	typedef void (*Func)(vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t groupVariable);
 	Func func;
 	vk::UniqueCommandBuffer secondaryCommandBuffer;
 	Test(const char* text_, Type t, Func func_) : text(text_), type(t), func(func_)  {}
+	Test(const char* text_, Type t, size_t invocationsMultiplier_, Func func_) : text(text_), type(t), invocationsMultiplier(invocationsMultiplier_), func(func_)  {}
 	Test(const char* groupText_, uint32_t groupVariable_, const char* text_, Type t, Func func_) : groupText(groupText_), groupVariable(groupVariable_), text(text_), type(t), func(func_)  {}
 };
 
@@ -772,9 +774,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   VS max throughput for triangle list (single per-scene vkCmdDraw() call,\n"
-		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
+		"   Triangle list (triangle list primitive type,\n"
+		"      single per-scene vkCmdDraw() call, attributeless,\n"
+		"      constant VS output):                     ",
+		Test::Type::TriangleThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -786,10 +789,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   VS max throughput for indexed triangle list (single per-scene\n"
-		"      vkCmdDrawIndexed() call, monotonically increasing indices,\n"
+		"   Indexed triangle list (triangle list primitive type, single\n"
+		"      per-scene vkCmdDrawIndexed() call, no vertices shared between triangles,\n"
 		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
+		Test::Type::TriangleThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -802,11 +805,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   VS max throughput for indexed triangle list that reuses two indices from\n"
-		"      the previous triangle (single per-scene vkCmdDrawIndexed() call,\n"
-		"      monotonically increasing indices,\n"
+		"   Indexed triangle list that reuses two indices of the previous triangle\n"
+		"      (triangle list primitive type, single per-scene vkCmdDrawIndexed() call,\n"
 		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
+		Test::Type::TriangleThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(stripIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -818,26 +820,8 @@ static void initTests()
 		}
 	);
 
-#if 0 // not needed because it was replaced by the test bellow that uses strips of various lengths
-	tests.emplace_back(
-		"   VS max throughput for triangle strip\n"
-		"      (per-strip vkCmdDraw() call, 1000 triangles per strip,\n"
-		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessConstantOutputTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0,e=(numTriangles/maxTriStripLength)*(2+maxTriStripLength); i<e; i+=2+maxTriStripLength)
-				cb.draw(2+maxTriStripLength, 1, i, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-#endif
-
 	const char* triStripPerformanceText =
-		"   VS max throughput for triangle strips of various lengths\n"
+		"   Triangle strips of various lengths\n"
 		"      (per-strip vkCmdDraw() call, 1 to 1000 triangles per strip,\n"
 		"      attributeless, constant VS output):      ";
 	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
@@ -850,7 +834,7 @@ static void initTests()
 				s.append(28-s.size(), ' ');
 				return s;
 			}(n).c_str(),
-			Test::Type::VertexThroughput,
+			Test::Type::TriangleThroughput,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 			{
 				beginTest(cb, attributelessConstantOutputTriStripPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -885,9 +869,9 @@ static void initTests()
 #endif
 
 	const char* indexedTriStripPerformanceText =
-		"   VS max throughput for indexed triangle strips of various lengths\n"
+		"   Indexed triangle strips of various lengths\n"
 		"      (per-strip vkCmdDrawIndexed() call, 1-1000 triangles per strip,\n"
-		"      monotonically increasing indices,\n"
+		"      no vertices shared between strips, each index used just once,\n"
 		"      attributeless, constant VS output):      ";
 	for(uint32_t n : array<uint32_t,12>{1,2,5,8,10,20,25,40,50,100,125,maxTriStripLength}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
@@ -899,7 +883,7 @@ static void initTests()
 				s.append(28-s.size(), ' ');
 				return s;
 			}(n).c_str(),
-			Test::Type::VertexThroughput,
+			Test::Type::TriangleThroughput,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t n)
 			{
 				cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -914,31 +898,10 @@ static void initTests()
 		);
 	}
 
-#if 0 // not needed because it was replaced by the test bellow that uses strips of various lengths
-	tests.emplace_back(
-		"   VS max throughput for primitive restart indexed triangle strip\n"
-		"      (single per-scene vkCmdDrawIndexed() call, 1000 triangles per strip\n"
-		"      followed by -1, monotonically increasing indices,\n"
-		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(stripPrimitiveRestart1002IndexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessConstantOutputPrimitiveRestartPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			uint32_t numIndicesPerStrip = maxTriStripLength+3;
-			uint32_t numStrips = numTriangles/maxTriStripLength;
-			cb.drawIndexed(numIndicesPerStrip*numStrips, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-#endif
-
 	const char* primitiveRestartPerformanceText =
-		"   VS max throughput for primitive restart indexed triangle strips of various\n"
-		"      lengths (single per-scene vkCmdDrawIndexed() call, 1-1000 triangles per\n"
-		"      strip, each strip finished by -1, monotonically increasing indices,\n"
+		"   Primitive restart indexed triangle strips of various lengths\n"
+		"      (single per-scene vkCmdDrawIndexed() call, 1-1000 triangles per strip,\n"
+		"      no vertices shared between strips, each index used just once,\n"
 		"      attributeless, constant VS output):      ";
 	for(uint32_t n : array<uint32_t,5>{1,2,5,8,1000}) {  // numbers in this list needs to be divisible by maxTriStripLength (1000 by default) with reminder zero
 
@@ -952,7 +915,7 @@ static void initTests()
 					s.append(28-s.size(), ' ');
 				return s;
 			}(n).c_str(),
-			Test::Type::VertexThroughput,
+			Test::Type::TriangleThroughput,
 			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t triPerStrip)
 			{
 				switch(triPerStrip) {
@@ -975,10 +938,10 @@ static void initTests()
 	}
 
 	tests.emplace_back(
-		"   VS max throughput of primitive restart, each triangle is replaced by one -1\n"
+		"   Primitive restart, each triangle is replaced by one -1\n"
 		"      (single per-scene vkCmdDrawIndexed() call,\n"
 		"      no fragments produced):                  ",
-		Test::Type::VertexThroughput,
+		Test::Type::TriangleThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(minusOneIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -992,10 +955,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   VS max throughput of primitive restart, only zeros in the index buffer\n"
+		"   Primitive restart, only zeros in the index buffer\n"
 		"      (single per-scene vkCmdDrawIndexed() call,\n"
 		"      no fragments produced):                  ",
-		Test::Type::VertexThroughput,
+		Test::Type::TriangleThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(zeroIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -1008,39 +971,8 @@ static void initTests()
 		}
 	);
 
+#if 0
 	if(runAllTests) {
-
-		tests.emplace_back(
-			"   VS max throughput for triangle list, VertexIndex and InstanceIndex used for\n"
-			"      position output (single per-scene vkCmdDraw() call,\n"
-			"      attributeless:                           ",
-			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-			{
-				beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-				          vector<vk::Buffer>(),
-				          vector<vk::DescriptorSet>());
-				cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-				endTest(cb, timestampIndex);
-			}
-		);
-
-		tests.emplace_back(
-			"   VS max throughput for indexed triangle list, VertexIndex and InstanceIndex\n"
-			"      used for position output (single per-scene vkCmdDrawIndexed() call,\n"
-			"      monotonically increasing indices,\n"
-			"      attributeless, constant VS output):      ",
-			Test::Type::VertexThroughput,
-			[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-			{
-				cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-				beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-				          vector<vk::Buffer>(),
-				          vector<vk::DescriptorSet>());
-				cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-				endTest(cb, timestampIndex);
-			}
-		);
 
 		tests.emplace_back(
 			"   VS max throughput for indexed triangle list that reuse two indices from\n"
@@ -1115,11 +1047,268 @@ static void initTests()
 		);
 
 	}
+#endif
 
 	tests.emplace_back(
-		"   GS max throughput when no output is produced\n"
-		"      (one draw call, attributeless):          ",
-		Test::Type::VertexThroughput,
+		"   Instancing throughput of vkCmdDraw()\n"
+		"      (one triangle per instance, constant VS output, one draw call,\n"
+		"      attributeless):                          ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.draw(3, numTriangles, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Instancing throughput of vkCmdDrawIndexed()\n"
+		"      (one triangle per instance, constant VS output, one draw call,\n"
+		"      attributeless):                          ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.drawIndexed(3, numTriangles, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Instancing throughput of vkCmdDrawIndirect()\n"
+		"      (one triangle per instance, one indirect draw call,\n"
+		"      one indirect record, attributeless:      ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.drawIndirect(indirectBuffer.get(),  // buffer
+			                size_t(numTriangles)*sizeof(vk::DrawIndirectCommand),  // offset
+			                1,  // drawCount
+			                sizeof(vk::DrawIndirectCommand));  // stride
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Instancing throughput of vkCmdDrawIndexedIndirect()\n"
+		"      (one triangle per instance, one indirect draw call,\n"
+		"      one indirect record, attributeless:      ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.drawIndexedIndirect(indirectIndexedBuffer.get(),  // buffer
+			                       size_t(numTriangles)*sizeof(vk::DrawIndexedIndirectCommand),  // offset
+			                       1,  // drawCount
+			                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Draw command throughput\n"
+		"      (per-triangle vkCmdDraw() in command buffer,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			for(uint32_t i=0; i<numTriangles; i++)
+				cb.draw(3, 1, i*3, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Draw indexed command throughput\n"
+		"      (per-triangle vkCmdDrawIndexed() in command buffer,\n"
+		"      attributeless, constant VS output):      ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			for(uint32_t i=0; i<numTriangles; i++)
+				cb.drawIndexed(3, 1, i*3, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   VkDrawIndirectCommand processing throughput\n"
+		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
+		"      attributeless):                          ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputPipeline.get(),
+			          simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			if(enabledFeatures.multiDrawIndirect)
+				cb.drawIndirect(indirectBuffer.get(),  // buffer
+				                0,  // offset
+				                numTriangles,  // drawCount
+				                sizeof(vk::DrawIndirectCommand));  // stride
+			else
+				tests[timestampIndex/2].enabled = false;
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		("   VkDrawIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
+		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
+		"      attributeless):                          ").c_str(),
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputPipeline.get(),
+			          simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			if(enabledFeatures.multiDrawIndirect)
+				cb.drawIndirect(indirectStrideBuffer.get(),  // buffer
+				                0,  // offset
+				                numTriangles,  // drawCount
+				                indirectRecordStride);  // stride
+			else
+				tests[timestampIndex/2].enabled = false;
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   VkDrawIndexedIndirectCommand processing throughput\n"
+		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
+		"      call, attributeless):                    ",
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(),
+			          simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			if(enabledFeatures.multiDrawIndirect)
+				cb.drawIndexedIndirect(indirectIndexedBuffer.get(),  // buffer
+				                       0,  // offset
+				                       numTriangles,  // drawCount
+				                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
+			else
+				tests[timestampIndex/2].enabled = false;
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		("   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
+		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
+		"      call, attributeless):                    ").c_str(),
+		Test::Type::TriangleThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(),
+			          simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			if(enabledFeatures.multiDrawIndirect)
+				cb.drawIndexedIndirect(indirectIndexedStrideBuffer.get(),  // buffer
+				                       0,  // offset
+				                       numTriangles,  // drawCount
+				                       indirectRecordStride);  // stride
+			else
+				tests[timestampIndex/2].enabled = false;
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   VS just writing constant output position (per-scene vkCmdDraw() call,\n"
+		"      attributeless, no fragments produced):   ",
+		Test::Type::VertexAndGeometryShader,
+		3,  // invocationsMultiplier
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   VS just writing constant output position (per-scene vkCmdDrawIndexed() call,\n"
+		"      (attributeless, no fragments produced):  ",
+		Test::Type::VertexAndGeometryShader,
+		3,  // invocationsMultiplier
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>());
+			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   VS producing output position from VertexIndex and InstanceIndex\n"
+		"      (single per-scene vkCmdDraw() call,\n"
+		"      attributeless, no fragments produced):   ",
+		Test::Type::VertexAndGeometryShader,
+		3,  // invocationsMultiplier
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				        vector<vk::Buffer>(),
+				        vector<vk::DescriptorSet>());
+			cb.draw(3*numTriangles, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   VS producing output position from VertexIndex and InstanceIndex\n"
+		"      (single per-scene vkCmdDrawIndexed() call,\n"
+		"      attributeless, no fragments produced):   ",
+		Test::Type::VertexAndGeometryShader,
+		3,  // invocationsMultiplier
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
+			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
+				        vector<vk::Buffer>(),
+				        vector<vk::DescriptorSet>());
+			cb.drawIndexed(3*numTriangles, 1, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   GS one triangle in and no triangle out\n"
+		"      (empty VS, attributeless):               ",
+		Test::Type::VertexAndGeometryShader,
+		1,  // invocationsMultiplier
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -1146,9 +1335,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   GS max throughput when single constant triangle is produced\n"
-		"      (one draw call, attributeless):          ",
-		Test::Type::VertexThroughput,
+		"   GS one triangle in and single constant triangle out\n"
+		"      (empty VS, attributeless):               ",
+		Test::Type::VertexAndGeometryShader,
+		1,  // invocationsMultiplier
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -1175,9 +1365,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   GS max throughput when two constant triangles are produced\n"
-		"      (one draw call, attributeless):          ",
-		Test::Type::VertexThroughput,
+		"   GS one triangle in and two constant triangles out\n"
+		"      (empty VS, attributeless):               ",
+		Test::Type::VertexAndGeometryShader,
+		1,  // invocationsMultiplier
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -1205,282 +1396,8 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   Instancing throughput of vkCmdDraw()\n"
-		"      (one triangle per instance, constant VS output, one draw call,\n"
-		"      attributeless):                          ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			cb.draw(3, numTriangles, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Instancing throughput of vkCmdDrawIndexed()\n"
-		"      (one triangle per instance, constant VS output, one draw call,\n"
-		"      attributeless):                          ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			cb.drawIndexed(3, numTriangles, 0, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Instancing throughput of vkCmdDrawIndirect()\n"
-		"      (one triangle per instance, one indirect draw call,\n"
-		"      one indirect record, attributeless:      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			cb.drawIndirect(indirectBuffer.get(),  // buffer
-			                size_t(numTriangles)*sizeof(vk::DrawIndirectCommand),  // offset
-			                1,  // drawCount
-			                sizeof(vk::DrawIndirectCommand));  // stride
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Instancing throughput of vkCmdDrawIndexedIndirect()\n"
-		"      (one triangle per instance, one indirect draw call,\n"
-		"      one indirect record, attributeless:      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			cb.drawIndexedIndirect(indirectIndexedBuffer.get(),  // buffer
-			                       size_t(numTriangles)*sizeof(vk::DrawIndexedIndirectCommand),  // offset
-			                       1,  // drawCount
-			                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Draw command throughput\n"
-		"      (per-triangle vkCmdDraw() in command buffer,\n"
-		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0; i<numTriangles; i++)
-				cb.draw(3, 1, i*3, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Draw indexed command throughput\n"
-		"      (per-triangle vkCmdDrawIndexed() in command buffer,\n"
-		"      attributeless, constant VS output):      ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0; i<numTriangles; i++)
-				cb.drawIndexed(3, 1, i*3, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-#if 0 // the tests are probably not needed
-	tests.emplace_back(
-		"   Draw command throughput with vec4 attribute\n"
-		"      (per-triangle vkCmdDraw() in command buffer,\n"
-		"      vec4 coordinate attribute):              ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>{ coordinate4Attribute.get() },
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0; i<numTriangles; i++)
-				cb.draw(3, 1, i*3, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Draw indexed command throughput with vec4 attribute\n"
-		"      (per-triangle vkCmdDrawIndexed() in command buffer,\n"
-		"      vec4 coordinate attribute):              ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>{ coordinate4Attribute.get() },
-			          vector<vk::DescriptorSet>());
-			for(uint32_t i=0; i<numTriangles; i++)
-				cb.drawIndexed(3, 1, i*3, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-#endif
-
-	tests.emplace_back(
-		"   VkDrawIndirectCommand processing throughput\n"
-		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
-		"      attributeless):                          ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessConstantOutputPipeline.get(),
-			          simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			if(enabledFeatures.multiDrawIndirect)
-				cb.drawIndirect(indirectBuffer.get(),  // buffer
-				                0,  // offset
-				                numTriangles,  // drawCount
-				                sizeof(vk::DrawIndirectCommand));  // stride
-			else
-				tests[timestampIndex/2].enabled = false;
-			endTest(cb, timestampIndex);
-		}
-	);
-
-#if 0 // the test is probably not needed
-	tests.emplace_back(
-		"   VkDrawIndirectCommand processing throughput with vec4 attribute\n"
-		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
-		"      vec4 coordiate attribute):               ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>{ coordinate4Attribute.get() },
-			          vector<vk::DescriptorSet>());
-			if(enabledFeatures.multiDrawIndirect)
-				cb.drawIndirect(indirectBuffer.get(),  // buffer
-				                0,  // offset
-				                numTriangles,  // drawCount
-				                sizeof(vk::DrawIndirectCommand));  // stride
-			else
-				tests[timestampIndex/2].enabled = false;
-			endTest(cb, timestampIndex);
-		}
-	);
-#endif
-
-	tests.emplace_back(
-		("   VkDrawIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
-		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
-		"      attributeless):                          ").c_str(),
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			beginTest(cb, attributelessConstantOutputPipeline.get(),
-			          simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			if(enabledFeatures.multiDrawIndirect)
-				cb.drawIndirect(indirectStrideBuffer.get(),  // buffer
-				                0,  // offset
-				                numTriangles,  // drawCount
-				                indirectRecordStride);  // stride
-			else
-				tests[timestampIndex/2].enabled = false;
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   VkDrawIndexedIndirectCommand processing throughput\n"
-		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
-		"      call, attributeless):                    ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessConstantOutputPipeline.get(),
-			          simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			if(enabledFeatures.multiDrawIndirect)
-				cb.drawIndexedIndirect(indirectIndexedBuffer.get(),  // buffer
-				                       0,  // offset
-				                       numTriangles,  // drawCount
-				                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
-			else
-				tests[timestampIndex/2].enabled = false;
-			endTest(cb, timestampIndex);
-		}
-	);
-
-#if 0 // the test is probably not needed
-	tests.emplace_back(
-		"   VkDrawIndexedIndirectCommand processing throughput with vec4 attribute\n"
-		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
-		"      call, vec4 coordiate attribute):         ",
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, coordinateAttributePipeline.get(), simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>{ coordinate4Attribute.get() },
-			          vector<vk::DescriptorSet>());
-			if(enabledFeatures.multiDrawIndirect)
-				cb.drawIndexedIndirect(indirectIndexedBuffer.get(),  // buffer
-				                       0,  // offset
-				                       numTriangles,  // drawCount
-				                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
-			else
-				tests[timestampIndex/2].enabled = false;
-			endTest(cb, timestampIndex);
-		}
-	);
-#endif
-
-	tests.emplace_back(
-		("   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
-		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
-		"      call, attributeless):                    ").c_str(),
-		Test::Type::VertexThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
-			beginTest(cb, attributelessConstantOutputPipeline.get(),
-			          simplePipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>());
-			if(enabledFeatures.multiDrawIndirect)
-				cb.drawIndexedIndirect(indirectIndexedStrideBuffer.get(),  // buffer
-				                       0,  // offset
-				                       numTriangles,  // drawCount
-				                       indirectRecordStride);  // stride
-			else
-				tests[timestampIndex/2].enabled = false;
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
 		"   One attribute performance - 1x vec4 attribute\n"
-		"      (attribute used, one draw call):         ",
+		"      (attribute used, per-scene draw call):   ",
 		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -1494,7 +1411,7 @@ static void initTests()
 
 	tests.emplace_back(
 		"   One buffer performance - 1x vec4 buffer\n"
-		"      (1x read in VS, one draw call):          ",
+		"      (1x read in VS, per-scene draw call):    ",
 		Test::Type::AttributesAndBuffers,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -10009,7 +9926,7 @@ static void frame()
 		// shuffle tests
 		// to run them in different order each time
 		// except the first test doing warm up;
-		// it avoids some problems on Radeons when one test might cause
+		// shuffling of the tests avoids some problems on Radeons when one test might cause
 		// following test to perform poorly probably because some parts of the GPU are
 		// switched into powersaving states because of not high enough load)
 		if((*seqStart)->type != Test::Type::TransferThroughput)
@@ -10431,6 +10348,61 @@ int main(int argc,char** argv)
 				i+=2;
 			}
 
+			// print result line with specially formatted number
+			auto printResultLine =
+				[](const string& text, const double value, const char* units)
+				{
+					// print test text
+					cout << text;
+
+					// generate remainders
+					uint64_t d = uint64_t(value + 0.5);
+					vector<uint8_t> remainders;
+					while(d != 0) {
+						uint8_t r = uint8_t(d % 10);
+						d = d / 10;
+						remainders.push_back(r);
+					}
+
+					size_t validNumbers = remainders.size();
+					if(validNumbers == 0)
+						cout << "0";
+					else
+					{
+						// print number
+						unsigned numbersBeforeDecimalPoint = unsigned((validNumbers-1) % 3) + 1;
+						size_t exponentIndex = (validNumbers-1) / 3;
+						unsigned i=0;
+						for(; i<numbersBeforeDecimalPoint; i++) {
+							cout << char('0' + remainders.back());
+							remainders.pop_back();
+						}
+						if(!remainders.empty()) {
+							cout << ".";
+							if(4-i > remainders.size())
+								i = 4 - remainders.size();
+							for(; i<4; i++) {
+								cout << char('0' + remainders.back());
+								remainders.pop_back();
+							}
+						}
+
+						// print suffix
+						if(exponentIndex == 0)
+							cout << " ";
+						else
+							if(exponentIndex < 7) {
+								constexpr array<char*,7> units = { " ", " kilo-", " mega-", " giga-", " tera-", " peta-", " exa-" };
+								cout << units[exponentIndex];
+							}
+							else
+								cout << " * 1e" << exponentIndex * 3 << " ";
+					}
+
+					// print units
+					cout << units << endl;
+				};
+
 			// print the result at the end
 			double totalMeasurementTime=chrono::duration<double>(chrono::steady_clock::now()-startTime).count();
 			if(totalMeasurementTime>((longTest)?longTestTime:standardTestTime)) {
@@ -10440,13 +10412,13 @@ int main(int argc,char** argv)
 				size_t triangleTestsNumRounds = 0;
 				for(size_t i=0; i<tests.size(); i++) {
 					Test& t = tests[i];
-					if(t.type == Test::Type::VertexThroughput) {
+					if(t.type == Test::Type::TriangleThroughput) {
 						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
 							cout << tests[i].groupText << endl;
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
-							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+							printResultLine(t.text, double(numTriangles)/time_ns*1e9, "triangles/s");
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							triangleTestsNumRounds = max(t.renderingTimes.size(), triangleTestsNumRounds);
 						}
@@ -10455,6 +10427,28 @@ int main(int argc,char** argv)
 					}
 				}
 				double totalTriangleTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
+
+				cout << "\nVertex and geometry shader throughput:" << endl;
+				renderingTimeSum = 0;
+				size_t vertexTestsNumRounds = 0;
+				for(size_t i=0; i<tests.size(); i++) {
+					Test& t = tests[i];
+					if(t.type == Test::Type::VertexAndGeometryShader) {
+						if(i!=0 && tests[i].groupText && tests[i-1].groupText!=tests[i].groupText)
+							cout << tests[i].groupText << endl;
+						if(t.enabled) {
+							sort(t.renderingTimes.begin(), t.renderingTimes.end());
+							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
+							printResultLine(t.text, double(numTriangles)*t.invocationsMultiplier/time_ns*1e9,
+							                (t.invocationsMultiplier == 3) ? "vertices/s" : "invocations/s");
+							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
+							vertexTestsNumRounds = max(t.renderingTimes.size(), vertexTestsNumRounds);
+						}
+						else
+							cout << t.text << " not supported" << endl;
+					}
+				}
+				double totalVertexTestsTime = double(renderingTimeSum) * timestampPeriod_ns;
 
 				cout << "\nAttributes and buffers:" << endl;
 				renderingTimeSum = 0;
@@ -10467,7 +10461,7 @@ int main(int argc,char** argv)
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
-							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+							printResultLine(t.text, double(numTriangles)*3/time_ns*1e9, "vertices/s");
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							attribAndBufferTestsNumRounds = max(t.renderingTimes.size(), attribAndBufferTestsNumRounds);
 						}
@@ -10488,7 +10482,7 @@ int main(int argc,char** argv)
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
-							cout << t.text << double(numTriangles)/time_ns*1e9/1e6 << " million triangles/s" << endl;
+							printResultLine(t.text, double(numTriangles)*3/time_ns*1e9, "vertices/s");
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							transformationTestsNumRounds = max(t.renderingTimes.size(), transformationTestsNumRounds);
 						}
@@ -10510,7 +10504,7 @@ int main(int argc,char** argv)
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
-							cout << t.text << double(numScreenFragments)*t.numRenderedItems/time_ns*1e9/1e9 << " * 1e9 per second" << endl;
+							printResultLine(t.text, double(numScreenFragments)*t.numRenderedItems/time_ns*1e9, "fragments/s");
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							fragmentTestsNumRounds = max(t.renderingTimes.size(), fragmentTestsNumRounds);
 						#if 0 // tuning of tests to not take too long
@@ -10554,6 +10548,8 @@ int main(int argc,char** argv)
 				cout << "\nMeasurement statistics:\n"
 				        "   Triangle throughput measurement time:  " << totalTriangleTestsTime/1e9 <<
 				        " seconds using " << triangleTestsNumRounds << " test rounds.\n"
+				        "   Vertex throughput measurement time:    " << totalVertexTestsTime/1e9 <<
+				        " seconds using " << vertexTestsNumRounds << " test rounds.\n"
 				        "   Attribute and Buffer measurement time: " << totalAttribAndBufferTestsTime/1e9 <<
 				        " seconds using " << attribAndBufferTestsNumRounds << " test rounds.\n"
 				        "   Transformation measurement time:       " << totalTransformationTestsTime/1e9 <<
