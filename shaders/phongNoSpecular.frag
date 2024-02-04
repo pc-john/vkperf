@@ -42,7 +42,7 @@ void main() {
 	// Lambert's diffuse reflection
 	float nDotL=dot(n,l);
 	fragColor.rgb=(ambientLight*ambientColor.rgb+
-						diffuseLight*diffuseColor.rgb*max(nDotL,0.))*attenuation;
+	               diffuseLight*diffuseColor.rgb*max(nDotL,0.))*attenuation;
 	fragColor.a=diffuseColor.a;
 
 	// global ambient

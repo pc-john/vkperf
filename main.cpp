@@ -1118,7 +1118,7 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   Draw command throughput\n"
+		"   vkCmdDraw() throughput\n"
 		"      (per-triangle vkCmdDraw() in command buffer,\n"
 		"      attributeless, constant VS output):      ",
 		Test::Type::TriangleThroughput,
@@ -1134,7 +1134,7 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   Draw indexed command throughput\n"
+		"   vkCmdDrawIndexed() throughput\n"
 		"      (per-triangle vkCmdDrawIndexed() in command buffer,\n"
 		"      attributeless, constant VS output):      ",
 		Test::Type::TriangleThroughput,
@@ -1241,8 +1241,9 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   VS just writing constant output position (per-scene vkCmdDraw() call,\n"
-		"      attributeless, no fragments produced):   ",
+		"   VS throughput using vkCmdDraw() - minimal VS that just writes\n"
+		"      constant output position (per-scene vkCmdDraw() call,\n"
+		"      no attributes, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
 		3,  // invocationsMultiplier
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1256,8 +1257,9 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   VS just writing constant output position (per-scene vkCmdDrawIndexed() call,\n"
-		"      (attributeless, no fragments produced):  ",
+		"   VS throughput using vkCmdDrawIndexed() - minimal VS that just writes\n"
+		"      constant output position (per-scene vkCmdDrawIndexed() call,\n"
+		"      no attributes, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
 		3,  // invocationsMultiplier
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
@@ -1273,7 +1275,7 @@ static void initTests()
 
 	tests.emplace_back(
 		"   VS producing output position from VertexIndex and InstanceIndex\n"
-		"      (single per-scene vkCmdDraw() call,\n"
+		"      using vkCmdDraw() (single per-scene vkCmdDraw() call,\n"
 		"      attributeless, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
 		3,  // invocationsMultiplier
@@ -1289,7 +1291,7 @@ static void initTests()
 
 	tests.emplace_back(
 		"   VS producing output position from VertexIndex and InstanceIndex\n"
-		"      (single per-scene vkCmdDrawIndexed() call,\n"
+		"      using vkCmdDrawIndexed() (single per-scene vkCmdDrawIndexed() call,\n"
 		"      attributeless, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
 		3,  // invocationsMultiplier
@@ -2776,7 +2778,8 @@ static void initTests()
 
 
 	tests.emplace_back(
-		"   Single fullscreen quad, constant color FS:  ",
+		"   Single full-framebuffer quad,\n"
+		"      constant color FS:                       ",
 		Test::Type::FragmentThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2790,7 +2793,8 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   10x fullscreen quad, constant color FS:     ",
+		"   10x full-framebuffer quad,\n"
+		"      constant color FS:                       ",
 		Test::Type::FragmentThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2850,10 +2854,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   Textured Phong, packed uniforms, four smooth interpolators\n"
+		"   Textured Phong, packed uniforms (four smooth interpolators\n"
 		"      (vec3+vec3+vec4+vec2), 4x uniform (material (56 byte) +\n"
 		"      globalAmbientLight (12 byte) + light (64 byte) + sampler2D),\n"
-		"      10x fullscreen quad:                     ",
+		"      10x fullscreen quad):                    ",
 		Test::Type::FragmentThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2867,10 +2871,10 @@ static void initTests()
 	);
 
 	tests.emplace_back(
-		"   Textured Phong, not packed uniforms, four smooth interpolators\n"
+		"   Textured Phong, not packed uniforms (four smooth interpolators\n"
 		"      (vec3+vec3+vec4+vec2), 4x uniform (material (72 byte) +\n"
 		"      globalAmbientLight (12 byte) + light (80 byte) + sampler2D),\n"
-		"      10x fullscreen quad:                     ",
+		"      10x fullscreen quad):                    ",
 		Test::Type::FragmentThroughput,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
@@ -2879,6 +2883,41 @@ static void initTests()
 			          phongTexturedPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ phongTexturedNotPackedDescriptorSet });
+			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Simplified Phong, no texture, no specular (2x smooth interpolator\n"
+		"      (vec3+vec3), 3x uniform (material (vec4+vec4) + globalAmbientLight\n"
+		"      (vec3) + light (48 bytes: position+attenuation+ambient+diffuse)),\n"
+		"      10x fullscreen quad):                    ",
+		Test::Type::FragmentThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
+			beginTest(cb, phongNoSpecularPipeline.get(), threeUniformFSPipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>{ threeUniformFSDescriptorSet });
+			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+			endTest(cb, timestampIndex);
+		}
+	);
+
+	tests.emplace_back(
+		"   Simplified Phong, no texture, no specular, single uniform\n"
+		"      (2x smooth interpolator (vec3+vec3), 1x uniform\n"
+		"      (material+globalAmbientLight+light (vec4+vec4+vec4 + 3x vec4),\n"
+		"      10x fullscreen quad):                    ",
+		Test::Type::FragmentThroughput,
+		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
+		{
+			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
+			beginTest(cb, phongNoSpecularSingleUniformPipeline.get(),
+			          oneUniformFSPipelineLayout.get(), timestampIndex,
+			          vector<vk::Buffer>(),
+			          vector<vk::DescriptorSet>{ allInOneLightingUniformDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
 		}
@@ -2909,40 +2948,6 @@ static void initTests()
 			beginTest(cb, fillrateUniformColor4bPipeline.get(), oneUniformFSPipelineLayout.get(), timestampIndex,
 			          vector<vk::Buffer>(),
 			          vector<vk::DescriptorSet>{ one4bUniformFSDescriptorSet });
-			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Phong, no texture, no specular, 2x smooth interpolator (vec3+vec3),\n"
-		"      3x uniform (material (vec4+vec4) + globalAmbientLight (vec3) +\n"
-		"      light (48 bytes: position+attenuation+ambient+diffuse)),\n"
-		"      10x fullscreen quad:                     ",
-		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, phongNoSpecularPipeline.get(), threeUniformFSPipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>{ threeUniformFSDescriptorSet });
-			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
-			endTest(cb, timestampIndex);
-		}
-	);
-
-	tests.emplace_back(
-		"   Phong, no texture, no specular, 2x smooth interpolator (vec3+vec3),\n"
-		"      1x uniform (material+globalAmbientLight+light (vec4+vec4+vec4 +\n"
-		"      3x vec4), 10x fullscreen quad:           ",
-		Test::Type::FragmentThroughput,
-		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
-		{
-			tests[timestampIndex/2].numRenderedItems = numFullscreenQuads;
-			beginTest(cb, phongNoSpecularSingleUniformPipeline.get(),
-			          oneUniformFSPipelineLayout.get(), timestampIndex,
-			          vector<vk::Buffer>(),
-			          vector<vk::DescriptorSet>{ allInOneLightingUniformDescriptorSet });
 			cb.draw(4, numFullscreenQuads, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
 			endTest(cb, timestampIndex);
 		}
@@ -10392,7 +10397,7 @@ int main(int argc,char** argv)
 							cout << " ";
 						else
 							if(exponentIndex < 7) {
-								constexpr array<char*,7> units = { " ", " kilo-", " mega-", " giga-", " tera-", " peta-", " exa-" };
+								constexpr array<const char*,7> units = { " ", " kilo-", " mega-", " giga-", " tera-", " peta-", " exa-" };
 								cout << units[exponentIndex];
 							}
 							else
@@ -10507,9 +10512,6 @@ int main(int argc,char** argv)
 							printResultLine(t.text, double(numScreenFragments)*t.numRenderedItems/time_ns*1e9, "fragments/s");
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							fragmentTestsNumRounds = max(t.renderingTimes.size(), fragmentTestsNumRounds);
-						#if 0 // tuning of tests to not take too long
-							cout << "      measurement time: " << time_ns/1e6 << "ms" << endl;
-						#endif
 						}
 						else
 							cout << t.text << " not supported" << endl;

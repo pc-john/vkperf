@@ -4,64 +4,59 @@ Vulkan Performance Measurement Tool perform various tests to measure performance
 The tests are described in detail in this file.
 
 The list of tests follows:
-1. [VS max throughput](#vs-max-throughput)
-2. [VS max throughput using indexed draw call](#vs-max-throughput-using-indexed-draw-call)
-3. [VS VertexIndex and InstanceIndex forming output](#vs-vertexindex-and-instanceindex-forming-output)
-4. [VS VertexIndex and InstanceIndex forming output using indexed draw call](#vs-vertexindex-and-instanceindex-forming-output-using-indexed-draw-call)
-5. [GS max throughput when no output is produced](#gs-max-throughput-when-no-output-is-produced)
-6. [GS max throughput when single constant triangle is produced](#gs-max-throughput-when-single-constant-triangle-is-produced)
-7. [GS max throughput when two constant triangles are produced](#gs-max-throughput-when-two-constant-triangles-are-produced)
-8. [Instancing throughput of vkCmdDraw()](#instancing-throughput-of-vkcmddraw)
-9. [Instancing throughput of vkCmdDrawIndexed()](#instancing-throughput-of-vkcmddrawindexed)
-10. [Instancing throughput of vkCmdDrawIndirect()](#instancing-throughput-of-vkcmddrawindirect)
-11. [Instancing throughput of vkCmdDrawIndexedIndirect()](#instancing-throughput-of-vkcmddrawindexedindirect)
-12. [Draw command throughput](#draw-command-throughput)
-13. [Draw indexed command throughput](#draw-indexed-command-throughput)
-14. [VkDrawIndirectCommand processing throughput](#vkdrawindirectcommand-processing-throughput)
-15. [VkDrawIndirectCommand processing throughput with stride](#vkdrawindirectcommand-processing-throughput-with-stride)
-16. [VkDrawIndexedIndirectCommand processing throughput](#vkdrawindexedindirectcommand-processing-throughput)
-17. [VkDrawIndexedIndirectCommand processing throughput with stride](#vkdrawindexedindirectcommand-processing-throughput-with-stride)
-18. ... 36. [Attribute and buffer performance](#attribute-and-buffer-performance)
+1. [Triangle list](#triangle-list)
+2. [Indexed triangle list](#indexed-triangle-list)
+3. [Indexed triangle list that reuses two indices of the previous triangle](#indexed-triangle-list-that-reuses-two-indices-of-the-previous-triangle)
+4. [Triangle strips of various lengths](#triangle-strips-of-various-lengths)
+5. [Indexed triangle strips of various lengths](#indexed-triangle-strips-of-various-lengths)
+6. [Primitive restart indexed triangle strips of various lengths](#primitive-restart-indexed-triangle-strips-of-various-lengths)
+7. [Primitive restart, each triangle is replaced by one -1](#primitive-restart-each-triangle-is-replaced-by-minus-one)
+8. [Primitive restart, only zeros in the index buffer](#primitive-restart-only-zeros-in-the-index-buffer)
+9. [Instancing throughput of vkCmdDraw()](#instancing-throughput-of-vkcmddraw)
+10. [Instancing throughput of vkCmdDrawIndexed()](#instancing-throughput-of-vkcmddrawindexed)
+11. [Instancing throughput of vkCmdDrawIndirect()](#instancing-throughput-of-vkcmddrawindirect)
+12. [Instancing throughput of vkCmdDrawIndexedIndirect()](#instancing-throughput-of-vkcmddrawindexedindirect)
+13. [vkCmdDraw() throughput](#vkcmddraw-throughput)
+14. [vkCmdDrawIndexed() throughput](#vkcmddrawindexed-throughput)
+15. [VkDrawIndirectCommand processing throughput](#vkdrawindirectcommand-processing-throughput)
+16. [VkDrawIndirectCommand processing throughput with stride 32](#vkdrawindirectcommand-processing-throughput-with-stride)
+17. [VkDrawIndexedIndirectCommand processing throughput](#vkdrawindexedindirectcommand-processing-throughput)
+18. [VkDrawIndexedIndirectCommand processing throughput with stride 32](#vkdrawindexedindirectcommand-processing-throughput-with-stride)
+19. [VS throughput using vkCmdDraw()](#vs-throughput-using-vkcmddraw)
+20. [VS throughput using vkCmdDrawIndexed()](#vs-thoughput-using-vkcmddrawindexed)
+21. [VS producing output position from VertexIndex and InstanceIndex using vkCmdDraw()](#vs-producing-output-position-from-vertexindex-and-instanceindex-using-vkcmddraw)
+22. [VS producing output position from VertexIndex and InstanceIndex using vkCmdDrawIndexed()](#vs-producing-output-position-from-vertexindex-and-instanceindex-vkcmddrawindexed)
+23. [GS one triangle in and no triangle out](#gs-one-triangle-in-and-no-triangle-out)
+24. [GS one triangle in and single constant triangle out](#gs-one-triangle-in-and-single-constant-triangle-out)
+25. [GS one triangle in and two constant triangles out](#gs-one-triangle-in-and-two-constant-triangles-out)
+26. ... 44. [Attributes and buffers](#attributes-and-buffers)
 - [Attribute tests](#attribute-tests)
 - [Buffer tests](#buffer-tests)
 - [Interleaved attribute tests](#interleaved-attribute-tests)
 - [Interleaved buffer tests](#interleaved-buffer-tests)
 - [Packed data tests](#packed-data-tests)
 - [Attribute conversion test](#attribute-conversion-test)
-37. ... 51. [Matrix performance](#matrix-performance)
+45. ... 59. [Transformations](#transformations)
 - [Uniform vs buffer vs attribute matrix tests](#uniform-vs-buffer-vs-attribute-matrix-tests)
 - [Single whole scene matrix test](#single-whole-scene-matrix-test)
 - [Single per-triangle matrix tests](#single-per-triangle-matrix-tests)
 - [Three matrices test](#three-matrices-test)
 - [Five matrices tests](#five-matrices-tests)
-52. ... 69. [Textured Phong performance](#textured-phong-performance)
+60. ... 77. [Textured Phong performance](#textured-phong-performance)
 - [Textured Phong, matrices and four attributes](#textured-phong-matrices-and-four-attributes)
 - [Textured Phong, matrices and packed attributes](#textured-phong-matrices-and-packed-attributes)
 - [Textured Phong and PAT performance](#textured-phong-and-pat-performance)
 - [Textured Phong, PAT, indexed rendering and primitive restart](#textured-phong-pat-indexed-rendering-and-primitive-restart)
 - [Textured Phong and double precision matrix performance](#textured-phong-and-double-precision-matrix-performance)
-70. [Shared vertex performance](#shared-vertex-performance)
-71. [Indexed shared vertex performance](#indexed-shared-vertex-performance)
-72. [Triangle strip performance](#triangle-strip-performance)
-73. [Indexed triangle strip performance](#indexed-triangle-strip-performance)
-74. - 78. [Primitive restart performance](#primitive-restart-performance)
-- [Primitive restart performance with single per-scene vkCmdDrawIndexed() call](#primitive-restart-performance-with-single-per-scene-vkcmddrawindexed-call)
-- [Primitive restart performance with per-strip vkCmdDrawIndexed() call](#primitive-restart-performance-with-per-strip-vkcmddrawindexed-call)
-- [Primitive restart using 2x -1 followed by indexed triangle](#primitive-restart-using-2x-1-followed-by-indexed-triangle)
-- [Primitive restart using 5x -1 followed by indexed triangle](#primitive-restart-using-5x-1-followed-by-indexed-triangle)
-- [Primitive restart -1 performance, each triangle indices replaced by one -1](#primitive-restart-1-performance-each-triangle-indices-replaced-by-one-1)
-79. - 83. [The same vertex processing performance](#the-same-vertex-processing-performance)
-- [All 1 index performance, the pipeline uses primitive restart](#all-1-index-performance-the-pipeline-uses-primitive-restart)
-- [All 1 index performance, the pipeline uses single per-scene triangle strip](#all-1-index-performance-the-pipeline-uses-single-per-scene-triangle-strip)
-- [All 1 index performance, the pipeline uses indexed triangle list](#all-1-index-performance-the-pipeline-uses-indexed-triangle-list)
-- [The same vertex triangle strip performance](#the-same-vertex-triangle-strip-performance)
-- [The same vertex triangle list performance](#the-same-vertex-triangle-list-performance)
+78. ... 88. [Fragment throughput](#fragment-throughput)
+89. [Transfer of consecutive memory blocks](#transfer-of-consecutive-memory-blocks)
+90. [Transfer of spaced memory blocks](#transfer-of-spaced-memory-blocks)
 
 
-## VS max throughput
+## Triangle list
 
-Vertex shader maximum throughput test measures number of triangles per second that particular Vulkan device can render.
-To get vertex throughput, multiply the result by 3.
+Triangle list test measures number of triangles per second that particular Vulkan device can render.
+The test uses triangle list primitive topology and per-scene glCmdDraw().
 
 The test uses simple vertex shader with constant output. Thus, zero size triangles are produced.
 The shader's main() code is as follows:
@@ -85,9 +80,11 @@ vkCmdDraw(
 ```
 
 
-## VS max throughput using indexed draw call
+## Indexed triangle list
 
-The test is the same as the [previous test](#vs-max-throughput) except
+Indexed triangle list test measures number of rendered triangles per second.
+
+The test is the same as the [previous test](#triangle-list) except
 that it uses indexed draw call:
 
 ```c++
@@ -101,40 +98,60 @@ vkCmdDrawIndexed(
 );
 ```
 
+No indices are shared between the triangles, e.g. no vertex reuse.
 
-## VS VertexIndex and InstanceIndex forming output
 
-The test measures vertex shader throughput with gl_VertexIndex and gl_InstanceIndex 
-overhead:
+## Indexed triangle list that reuses two indices of the previous triangle
 
-```c++
-void main() {
-	gl_Position = vec4(0, 0, float(gl_VertexIndex + gl_InstanceIndex) * 1e-20, 1);
-}
-```
+The test is the same as the [previous test](#indexed-triangle-list) except
+that each triangle reuses two indices of the previous triangle.
 
-Rendering of the whole scene is performed by a single draw call:
+
+## Triangle strips of various lengths
+
+The test measures triangle throughput when rendering triangle strips of various lengths.
+
+The test uses triangle strip primitive topology and per-strip vkCmdDraw() call:
 
 ```c++
 vkCmdDraw(
 	commandBuffer,
-	3*numberOfTriangles,  // vertexCount
+	numberOfStripTriangles+2,  // vertexCount
 	1,  // instanceCount
-	0,  // firstVertex
+	stripStartIndex,  // firstVertex
+	0   // firstInstance
+);
+```
+
+## Indexed triangle strips of various lengths
+
+The test measures triangle throughput when rendering triangle strips of various lengths.
+
+The test uses triangle strip primitive topology and per-strip vkCmdDrawIndexed() call:
+
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	numberOfStripTriangles+2,  // indexCount
+	1,  // instanceCount
+	stripStartIndex,  // firstIndex
+	0,  // vertexOffset
 	0   // firstInstance
 );
 ```
 
 
-## VS VertexIndex and InstanceIndex forming output using indexed draw call
+## Primitive restart indexed triangle strips of various lengths
 
-The test is the same as the [previous test](#vs-vertexindex-and-instanceindex-forming-output)
-except that it uses indexed draw call:
+The test measures triangle throughput when using primitive restart.
+Number of tests is performed to measure the throughput when strips of various lengths are stored in the index buffer.
+
+The test uses per-scene vkCmdDrawIndexed() call:
 
 ```c++
 vkCmdDrawIndexed(
 	commandBuffer,
-	3*numberOfTriangles,  // indexCount
+	numIndicesPerStrip*numStrips,  // indexCount
 	1,  // instanceCount
 	0,  // firstIndex
 	0,  // vertexOffset
@@ -143,93 +160,35 @@ vkCmdDrawIndexed(
 ```
 
 
-## GS max throughput when no output is produced
+## Primitive restart, each triangle is replaced by one -1
 
-Geometry shader maximum throughput test uses empty geometry shader that produces no output:
-
-```c++
-layout(triangles) in;
-layout(triangle_strip,max_vertices=3) out;
-void main() {
-}
-```
-
-It is fed by empty vertex shader:
+The test measures -1 overhead when using primitive restart.
+Each triangle is replaced by single -1. The scene is rendered by the single vkCmdDrawIndexed() call:
 
 ```c++
-void main() {
-}
-```
-
-Rendering of the whole scene is performed by a single draw call:
-
-```c++
-vkCmdDraw(
+vkCmdDrawIndexed(
 	commandBuffer,
-	3*numberOfTriangles,  // vertexCount
+	numMinusOneValues,  // indexCount
 	1,  // instanceCount
-	0,  // firstVertex
+	0,  // firstIndex
+	0,  // vertexOffset
 	0   // firstInstance
 );
 ```
 
 
-## GS max throughput when single constant triangle is produced
+## Primitive restart, only zeros in the index buffer
 
-The test uses the following geometry shader to produce single constant triangle:
-
-```c++
-layout(triangles) in;
-layout(triangle_strip,max_vertices=3) out;
-void main() {
-	gl_Position = vec4(0, 0, 0.5, 1);
-	EmitVertex();
-	gl_Position = vec4(0, 0, 0.6, 1);
-	EmitVertex();
-	gl_Position = vec4(0, 1e-10, 0.4, 1);
-	EmitVertex();
-}
-```
-
-It uses empty vertex shader and single vkCmdDraw() call
-as in the [previous test](#gs-max-throughput-when-no-output-is-produced).
-
-
-## GS max throughput when two constant triangles are produced
-
-The test uses the following geometry shader to produce two constant triangles:
-
-```c++
-layout(triangles) in;
-layout(triangle_strip,max_vertices=6) out;
-void main() {
-	gl_Position = vec4(0, 0, 0.5, 1);
-	EmitVertex();
-	gl_Position = vec4(0, 0, 0.6, 1);
-	EmitVertex();
-	gl_Position = vec4(0, 1e-10, 0.4, 1);
-	EmitVertex();
-	EndPrimitive();
-	gl_Position = vec4(0, 0, 0.7, 1);
-	EmitVertex();
-	gl_Position = vec4(0, 0, 0.8, 1);
-	EmitVertex();
-	gl_Position = vec4(0, 1e-10, 0.9, 1);
-	EmitVertex();
-}
-```
-
-It uses empty vertex shader and single vkCmdDraw() call
-as in the [previous two tests](#gs-max-throughput-when-no-output-is-produced).
+The test measures triangle throughput when index buffer contains only zeros, e.g. degenerated triangles.
 
 
 ## Instancing throughput of vkCmdDraw()
 
-Instancing throughput test measures instancing performance, e.g. number of instances per second
+The test measures instancing performance, e.g. number of rendered instances per second
 that particular Vulkan device can process.
 
-The test uses single triangle instanced very many times.
-Thus, the triangle throughput is equal to instance throughput.
+The test renders single triangle instanced very many times.
+This way, the triangle throughput is equal to instance throughput.
 
 The whole scene is rendered using a single vkCmdDraw() call:
 
@@ -254,8 +213,7 @@ void main() {
 
 ## Instancing throughput of vkCmdDrawIndexed()
 
-The test is the same as the [previous test](#instancing-throughput-of-vkcmddraw)
-except that it uses indexed draw call:
+The test measures instancing throughput when using indexed draw call:
 
 ```c++
 vkCmdDrawIndexed(
@@ -271,8 +229,10 @@ vkCmdDrawIndexed(
 
 ## Instancing throughput of vkCmdDrawIndirect()
 
-Instancing throughput test of vkCmdDrawIndirect() uses single triangle instanced
-many times in single VkDrawIndirectCommand struct with the following content:
+The test measures instancing performance of vkCmdDrawIndirect().
+
+VkDrawIndirectCommand structure instances single triangle very many times.
+The struct is initialized with the following content:
 
 ```c++
 indirectBufferPtr->vertexCount = 3;
@@ -281,7 +241,7 @@ indirectBufferPtr->firstVertex = 0;
 indirectBufferPtr->firstInstance = 0;
 ```
 
-The VkDrawIndirectCommand structure is processed by a single vkCmdDrawIndirect() call:
+The VkDrawIndirectCommand structure is rendered by a single vkCmdDrawIndirect() call:
 
 ```c++
 vkCmdDrawIndirect(
@@ -304,8 +264,10 @@ void main() {
 
 ## Instancing throughput of vkCmdDrawIndexedIndirect()
 
-Instancing throughput test of vkCmdDrawIndexedIndirect() uses single triangle instanced
-many times in single VkDrawIndexedIndirectCommand struct with the following content:
+The test measures instancing throughput of vkCmdDrawIndexedIndirect().
+
+VkDrawIndexedIndirectCommand structure instances single triangle very many times.
+The struct is initialized with the following content:
 
 ```c++
 	indirectIndexedBufferPtr->indexCount = 3;
@@ -315,7 +277,7 @@ many times in single VkDrawIndexedIndirectCommand struct with the following cont
 	indirectIndexedBufferPtr->firstInstance = 0;
 ```
 
-The VkDrawIndexedIndirectCommand structure is processed by a single vkCmdDrawIndirect() call:
+The VkDrawIndexedIndirectCommand structure is processed by a single vkCmdDrawIndexedIndirect() call:
 
 ```c++
 vkCmdDrawIndexedIndirect(
@@ -330,10 +292,10 @@ vkCmdDrawIndexedIndirect(
 The vertex shader outputs constant coordinates as in the [previous test](#instancing-throughput-of-vkcmddrawindirect).
 
 
-## Draw command throughput
+## vkCmdDraw() throughput
 
-Draw command throughput test measures performance of vkCmdDraw().
-Each draw call renders single triangle.
+The test measures throughput of vkCmdDraw().
+Each vkCmdDraw() renders single triangle.
 Thus, triangle throughput is equal to vkCmdDraw() throughput.
 
 Draw code is equal to the following one:
@@ -344,7 +306,7 @@ for(uint32_t i=0; i<numberOfTriangles; i++)
 		commandBuffer,
 		3,  // vertexCount
 		1,  // instanceCount
-		3*i,  // firstVertex
+		i*3,  // firstVertex
 		0   // firstInstance
 	);
 ```
@@ -358,10 +320,13 @@ void main() {
 ```
 
 
-## Draw indexed command throughput
+## vkCmdDrawIndexed() throughput
 
-The test is the same as the [previous test](#draw-command-throughput)
-except that it uses indexed draw call:
+The test measures throughput of vkCmdDrawIndexed().
+Each vkCmdDrawIndexed() renders single triangle.
+Thus, triangle throughput is equal to vkCmdDrawIndexed() throughput.
+
+Draw code is equal to the following one:
 
 ```c++
 for(uint32_t i=0; i<numberOfTriangles; i++)
@@ -369,7 +334,7 @@ for(uint32_t i=0; i<numberOfTriangles; i++)
 		commandBuffer,
 		3,  // indexCount
 		1,  // instanceCount
-		3*i,  // firstIndex
+		i*3,  // firstIndex
 		0,  // vertexOffset
 		0   // firstInstance
 	);
@@ -378,9 +343,8 @@ for(uint32_t i=0; i<numberOfTriangles; i++)
 
 ## VkDrawIndirectCommand processing throughput
 
-VkDrawIndirectCommand processing throughput test measures
-the number of VkDrawIndirectCommand structures processed per second.
-Each VkDrawIndirectCommand contains single triangle,
+The test measures the number of VkDrawIndirectCommand structures processed per second.
+Each VkDrawIndirectCommand renders single triangle,
 thus triangle throughput is equal to VkDrawIndirectCommand processing throughput.
 The content of VkDrawIndirectCommand is as follows:
 
@@ -399,7 +363,7 @@ void main() {
 }
 ```
 
-The rendering command is as follows:
+The rendering code is equal to the following one:
 
 ```c++
 vkCmdDrawIndirect(
@@ -430,9 +394,8 @@ vkCmdDrawIndirect(
 
 ## VkDrawIndexedIndirectCommand processing throughput
 
-VkDrawIndexedIndirectCommand processing throughput test measures
-the number of VkDrawIndexedIndirectCommand structures processed per second.
-Each VkDrawIndexedIndirectCommand contains single triangle,
+The test measures the number of VkDrawIndexedIndirectCommand structures processed per second.
+Each VkDrawIndexedIndirectCommand renders single triangle,
 thus triangle throughput is equal to VkDrawIndexedIndirectCommand processing throughput.
 The content of VkDrawIndexedIndirectCommand is as follows:
 
@@ -452,7 +415,7 @@ void main() {
 }
 ```
 
-The rendering command is as follows:
+The rendering code is equal to the following one:
 
 ```c++
 vkCmdDrawIndexedIndirect(
@@ -479,6 +442,178 @@ vkCmdDrawIndexedIndirect(
 	32  // stride
 );
 ```
+
+
+## VS throughput using vkCmdDraw()
+
+The test measures number of vertices per second that particular Vulkan device can process.
+The test uses per-scene glCmdDraw() and minimal VS that just writes constant output position.
+Thus, zero size triangles are produced.
+
+The shader's main() code is as follows:
+
+```c++
+void main() {
+	gl_Position = vec4(0, 0, 0.5, 1);
+}
+```
+
+Rendering of the whole scene is performed by a single draw call:
+
+```c++
+vkCmdDraw(
+	commandBuffer,
+	3*numberOfTriangles,  // vertexCount
+	1,  // instanceCount
+	0,  // firstVertex
+	0   // firstInstance
+);
+```
+
+
+## VS throughput using vkCmdDrawIndexed()
+
+The test measures number of vertices per second that particular Vulkan device can process.
+The test uses per-scene glCmdDrawIndexed() and minimal VS that just writes constant output position.
+Thus, zero size triangles are produced.
+
+The test is the same as the [previous test](#vs-throughput-using-vkcmddraw) except
+that it uses indexed draw call:
+
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	3*numberOfTriangles,  // indexCount
+	1,  // instanceCount
+	0,  // firstIndex
+	0,  // vertexOffset
+	0   // firstInstance
+);
+```
+
+No indices are shared between the triangles, e.g. no vertex reuse.
+
+
+## VS producing output position from VertexIndex and InstanceIndex using vkCmdDraw()
+
+The test measures vertex shader throughput with gl_VertexIndex and gl_InstanceIndex overhead:
+
+```c++
+void main() {
+	gl_Position = vec4(0, 0, float(gl_VertexIndex + gl_InstanceIndex) * 1e-20, 1);
+}
+```
+
+Rendering of the whole scene is performed by a single draw call:
+
+```c++
+vkCmdDraw(
+	commandBuffer,
+	3*numberOfTriangles,  // vertexCount
+	1,  // instanceCount
+	0,  // firstVertex
+	0   // firstInstance
+);
+```
+
+
+## VS producing output position from VertexIndex and InstanceIndex using vkCmdDrawIndexed()
+
+The test is the same as the [previous test](#vs-producing-output-position-from-vertexindex-and-instanceindex-using-vkcmddraw)
+except that it uses indexed draw call:
+
+```c++
+vkCmdDrawIndexed(
+	commandBuffer,
+	3*numberOfTriangles,  // indexCount
+	1,  // instanceCount
+	0,  // firstIndex
+	0,  // vertexOffset
+	0   // firstInstance
+);
+```
+
+
+## GS one triangle in and no triangle out
+
+The test measures geometry shader throughput. It receives one triangle as its input and produces no output:
+
+```c++
+layout(triangles) in;
+layout(triangle_strip,max_vertices=3) out;
+void main() {
+}
+```
+
+It is fed by empty vertex shader:
+
+```c++
+void main() {
+}
+```
+
+Rendering of the whole scene is performed by a single draw call:
+
+```c++
+vkCmdDraw(
+	commandBuffer,
+	3*numberOfTriangles,  // vertexCount
+	1,  // instanceCount
+	0,  // firstVertex
+	0   // firstInstance
+);
+```
+
+
+## GS one triangle in and single constant triangle out
+
+The test measures geometry shader throughput. It receives one triangle as its input and
+produces one single constant triangle as its output:
+
+```c++
+layout(triangles) in;
+layout(triangle_strip,max_vertices=3) out;
+void main() {
+	gl_Position = vec4(0, 0, 0.5, 1);
+	EmitVertex();
+	gl_Position = vec4(0, 0, 0.6, 1);
+	EmitVertex();
+	gl_Position = vec4(0, 1e-10, 0.4, 1);
+	EmitVertex();
+}
+```
+
+It uses empty vertex shader and single vkCmdDraw() call
+as in the [previous test](#gs-one-triangle-in-and-no-triangle-out).
+
+
+## GS one triangle in and two constant triangles out
+
+The test measures geometry shader throughput. It receives one triangle as its input and
+produces two constant triangles as its output:
+
+```c++
+layout(triangles) in;
+layout(triangle_strip,max_vertices=6) out;
+void main() {
+	gl_Position = vec4(0, 0, 0.5, 1);
+	EmitVertex();
+	gl_Position = vec4(0, 0, 0.6, 1);
+	EmitVertex();
+	gl_Position = vec4(0, 1e-10, 0.4, 1);
+	EmitVertex();
+	EndPrimitive();
+	gl_Position = vec4(0, 0, 0.7, 1);
+	EmitVertex();
+	gl_Position = vec4(0, 0, 0.8, 1);
+	EmitVertex();
+	gl_Position = vec4(0, 1e-10, 0.9, 1);
+	EmitVertex();
+}
+```
+
+It uses empty vertex shader and single vkCmdDraw() call
+as in the [previous two tests](#gs-one-triangle-in-and-no-triangle-out).
 
 
 ## Attribute and buffer performance
@@ -1165,12 +1300,14 @@ Such approach is used in the following tests:
 - Textured Phong and PAT performance - PAT v3 (Position-Attitude-Transform, performing translation (vec3) and rotation (quaternion as vec4) using implementation 3), PAT is per-triangle 2x vec4 in buffer, 2x uniform matrix (mat4+mat4), 2x packed attribute
 - Textured Phong and PAT performance - constant single PAT v2 sourced from the same index in buffer (2x vec4), 2x uniform matrix (mat4+mat4), 2x packed attribute
 
+
 ### Textured Phong, PAT, indexed rendering and primitive restart
 
 The tests based on [Textured Phong and PAT](#textured-phong-and-pat-performance)
 measure the performance of indexed rendering and primitive restart.
 Indexed rendering uses monotonically increasing indices,
 making each following index greater by one.
+No vertices are shared between triangles.
 Primitive restart tests appends -1 after each triangle.
 These are used in the following tests:
 
@@ -1243,211 +1380,407 @@ List of tests that use this approach:
   vertex positions (dvec3), single precision per-scene perspective matrix in uniform (mat4), packed attributes (3x uvec4)
 
 
-## Shared vertex performance
+## Fragment throughput
 
-The test measures rendering performance of triangle strip-like geometry.
-The pipeline is using VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST.
-For each new triangle, we duplicate the coordinates of the two vertices of the previous triangle.
-A number of tests are performed, using different lenght of the strip for each test.
-The vkCmdDraw() call is used for each strip.
+vkperf uses full-screen or full-framebuffer quads to render fragments. By default, framebuffer dimension is 1920x1080, e.g. FullHD resolution.
+The framebuffer is composed of color and depth buffer and does not use multisampling. The color buffer uses R8G8B8A8Srgb format.
+The depth format uses the first available format from the following list: D32Sfloat, D32SfloatS8Uint and D24UnormS8Uint.
+The depth compare operation is set to Less and depth writes are turned on.
 
-The simplified rendering code is as follows:
+### Single full-framebuffer quad, constant color FS
+
+The test renders single full-framebuffer quad while measuring fragment throughput.
+Fragment shader writes single constant value:
+
 ```c++
-for(uint32_t i=0,e=3*numberOfTriangles; i<e; i+=trianglesPerStrip*3)
-	vkCmdDraw(
-		commandBuffer,
-		trianglesPerStrip*3,  // vertexCount
-		1,  // instanceCount
-		i,  // firstVertex
-		0  // firstInstance
-	);
+void main() {
+	fragColor = vec4(1, 1, 0, 1);
+}
 ```
 
-The rest of the code is based on [Textured Phong and PAT](#textured-phong-and-pat-performance).
-So, it contains VS that implements textured Phong, per-scene PAT v2 (Position-Attitude-Transform:
-translation (vec3)+quaternion rotation (vec4)) that is read from the same index in the buffer,
-2x uniform matrix (mat4+mat4) and 2x packed attribute. 
+### 10x full-framebuffer quad, constant color FS
 
-The positions of vertices are generated in a way to specify tiny triangles
-in between pixel sampling locations distributed roughly across the whole framebuffer.
-So, they do not produce any fragments in the rasterizer.
+The test renders ten full-framebuffer quads. Quads are rendered with decreasing z distance as produced by VS:
 
-
-## Indexed shared vertex performance
-
-The test measures rendering performance of indexed triangle strip-like geometry.
-The pipeline is using VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST.
-For each new triangle, we reuse two indices of the previous triangle.
-A number of tests are performed, using different lenght of the strip for each test.
-The vkCmdDrawIndexed() call is used for each strip.
-
-The simplified rendering code is as follows:
 ```c++
-for(uint32_t i=0,e=3*numberOfTriangles; i<e; i+=trianglesPerStrip*3)
-	vkCmdDrawIndexed(
-		commandBuffer,
-		trianglesPerStrip*3,  // indexCount
-		1,  // instanceCount
-		i,  // firstIndex
-		0,  // vertexOffset
-		0  // firstInstance
-	);
+const vec2 vertices2D[] = {
+	{ -1.,-1. },
+	{ -1.,+1. },
+	{ +1.,-1. },
+	{ +1.,+1. },
+};
+
+void main() {
+	gl_Position = vec4(vertices2D[gl_VertexIndex], 0.6-(gl_InstanceIndex*0.05), 1.);
+}
 ```
 
-The rest of the code is similar to the [previous test](#shared-vertex-performance).
+The following call is used to render the scene:
 
-
-## Triangle strip performance
-
-The test measures rendering performance of triangle strips.
-The pipeline uses VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP. So, two vertices of each
-triangle are expected to be reused from the previous triangle by Vulkan device.
-A number of tests are performed, using different lenght of the strip for each test.
-The vkCmdDraw() call is used for each strip.
-
-The simplified rendering code is as follows:
 ```c++
-for(uint32_t i=0,e=totalNumberOfIndices; i<e; i+=2+maxTrianglesPerStrip)
-	for(uint32_t j=i,je=i+maxTrianglesPerStrip; j<je; j+=trianglesPerStrip)
-		vkCmdDraw(
-			commandBuffer,
-			trianglesPerStrip+2,  // vertexCount
-			1,  // instanceCount
-			j,  // firstVertex
-			0  // firstInstance
-		);
-```
-
-The rest of the code is similar to the [previous two tests](#shared-vertex-performance).
-
-
-## Indexed triangle strip performance
-
-The test measures rendering performance of indexed triangle strips.
-The pipeline uses VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP. So, two vertices of each
-triangle are expected to be reused from the previous triangle by Vulkan device.
-The indices in index buffer increase by one on each next position.
-A number of tests are performed, using different lenght of the strip for each test.
-The vkCmdDrawIndexed() call is used for each strip.
-
-The simplified rendering code is as follows:
-```c++
-for(uint32_t i=0,e=totalNumberOfIndices; i<e; i+=2+maxTrianglesPerStrip)
-	for(uint32_t j=i,je=i+maxTrianglesPerStrip; j<je; j+=trianglesPerStrip)
-		vkCmdDrawIndexed(
-			commandBuffer,
-			trianglesPerStrip+2,  // indexCount
-			1,  // instanceCount
-			j,  // firstIndex
-			0,  // vertexOffset
-			0  // firstInstance
-		);
-```
-
-The rest of the code is similar to the [previous three tests](#shared-vertex-performance).
-
-
-## Primitive restart performance
-
-The primitive restart tests should answer, among others, question of primitive restart overhead.
-
-The tests based on [Textured Phong and PAT tests](#textured-phong-and-pat-performance).
-Thus, VS is using packed attributes (2x vec4) extracted into position+normal+color+textureCoordinates,
-two uniform matrices (mat4+mat4) for perspective and view matrix, and
-constant single PAT v2 (vec3+vec4) read from the same index in the buffer (Position-Attitude-Transform,
-e.g. translation by vec3 and rotation by vec4 quaternion). No framents are produced in these tests.
-
-### Primitive restart performance with single per-scene vkCmdDrawIndexed() call
-
-Five tests are performed:
-- for having -1 after each triangle (three indices followed by -1),
-- after each two triangles (four indices followed by -1),
-- after each five triangles (seven indices followed by -1),
-- after each eight triangles (ten indices followed by -1),
-- after each thousand triangles (1002 indices followed by -1).
-
-The simplified rendering code is as follows:
-```c++
-vkCmdDrawIndexed(
+vkCmdDraw(
 	commandBuffer,
-	numIndicesInTheScene,  // indexCount
-	1,  // instanceCount
-	0,  // firstIndex
-	0,  // vertexOffset
-	0  // firstInstance
+	4,  // vertexCount
+	numFullscreenQuads,  // instanceCount
+	0,  // firstVertex
+	0   // firstInstance
 );
 ```
 
-More details are in the [Primitive restart section](#primitive-restart-performance).
+### Four smooth interpolators (4x vec4), 10x fullscreen quad
 
-### Primitive restart performance with per-strip vkCmdDrawIndexed() call
-
-The test is the same as the [previous one](#primitive-restart-performance-with-single-per-scene-vkcmddrawindexed-call)
-except it uses vkCmdDrawIndexed for each strip:
+The test measures the performance impact of smooth interpolators.
+It renders ten full-framebuffer quads, from the farthest to the closest
+while interpolating four vec4 variables:
 
 ```c++
-for(uint32_t i=0,e=numStrips*numIndicesPerStrip; i<e; i+=numIndicesPerStrip)
-	cb.drawIndexed(numIndicesPerStrip, 1, i, 0, 0);  // indexCount, instanceCount, firstIndex, vertexOffset, firstInstance
-	vkCmdDrawIndexed(
-		commandBuffer,
-		numIndicesPerStrip,  // indexCount
-		1,  // instanceCount
-		i,  // firstIndex
-		0,  // vertexOffset
-		0  // firstInstance
-	);
+layout(location=0) in smooth vec4 v1;
+layout(location=1) in smooth vec4 v2;
+layout(location=2) in smooth vec4 v3;
+layout(location=3) in smooth vec4 v4;
+layout(location=0) out vec4 fragColor;
+
+void main() {
+	fragColor = vec4(dot(v1,v3), dot(v2,v4), 1., 1.);  // do something with v1..v4 to avoid them being optimized out
+}
 ```
 
-### Primitive restart using 2x -1 followed by indexed triangle
+### Four flat interpolators (4x vec4), 10x fullscreen quad
 
-Each triangle is followed by two -1. It uses single per-scene vkCmdDrawIndexed() call.
+The test measures the performance impact of flat interpolators.
+It renders ten full-framebuffer quads, from the farthest to the closest
+while having four vec4 flat input variables in the fragment shader:
 
-### Primitive restart using 5x -1 followed by indexed triangle
+```c++
+layout(location=0) in flat vec4 v1;
+layout(location=1) in flat vec4 v2;
+layout(location=2) in flat vec4 v3;
+layout(location=3) in flat vec4 v4;
+layout(location=0) out vec4 fragColor;
 
-Each triangle is followed by five -1. It uses single per-scene vkCmdDrawIndexed() call.
+void main() {
+	fragColor = vec4(dot(v1,v3), dot(v2,v4), 1., 1.);  // do something with v1..v4 to avoid them being optimized out
+}
+```
 
-### Primitive restart -1 performance, each triangle indices replaced by one -1
+### Four textured phong interpolators (vec3+vec3+vec4+vec2), 10x fullscreen quad:                     ",
 
-The test measures processing performance of -1.
-Each triangle is replaced by single -1. It uses single per-scene vkCmdDrawIndexed() call.
+The test measures the performance impact of interpolators used usually for textured phong lighting
+(vec3 position, vec3 normal, vec4 color, vec2 texCoords).
+It renders ten full-framebuffer quads, from the farthest to the closest
+while interpolating inputs of the fragment shader:
+
+```c++
+layout(location=0) in smooth vec3 eyePosition;
+layout(location=1) in smooth vec3 eyeNormal;
+layout(location=2) in smooth vec4 color;
+layout(location=3) in smooth vec2 texCoord;
+layout(location=0) out vec4 fragColor;
+
+void main() {
+	fragColor = vec4(dot(vec4(eyePosition,1.), color), dot(eyeNormal, vec3(texCoord,1.)), 0., 1.);  // do something with the inputs to avoid them being optimized out
+}
+```
+
+### Textured Phong, packed uniforms
+
+The test performs full Phong computation in fragment shader. It is composed of diffuse reflection, specular effect, light attenuation (quadratic, linear, constant),
+ambient and global ambient light contributions, material emission, and texture application. The texture used is single texel texture (1x1, R8G8B8A8) sampled with trilinear sampler.
+Material and light data are packed and stored in uniforms. They take 132 bytes in total.
+
+Ten full-framebuffer quads are rendered, from the farthest to the closest.
+
+The fragment shader code follows:
+
+```c++
+layout(location=0) in smooth vec3 eyePosition;
+layout(location=1) in smooth vec3 eyeNormal;
+layout(location=2) in smooth vec4 color;
+layout(location=3) in smooth vec2 texCoord;
+
+layout(binding=0,std140) uniform Material {
+	vec4 materialData[3]; // ambient on offset 0, diffuse on offset 12, specular on offset 24, emissive on offset 36
+	layout(offset=48) float shininess;
+	layout(offset=52) int textureMode; // 0 - no texturing, 0x2100 - modulate, 0x1e01 - replace, 0x2101 - decal*/
+};
+layout(binding=1) uniform Global {
+	vec3 globalAmbientLight;
+};
+layout(binding=2) uniform Light {
+	vec4 lightPosition;
+	vec4 lightData[3]; // attenuation on offset 16, ambient on offset 28, diffuse on offset 40, specular on offset 52
+};
+layout(binding=3) uniform sampler2D textureSampler;
+
+layout(location=0) out vec4 fragColor;
 
 
-## The same vertex processing performance
+void main() {
 
-The five tests are processing the same vertex or vertex index.
-What differs is the use of primitive restart, using of indices,
-and the use of triangle strip or triangle list.
+	// read texture
+	vec4 textureColor;
+	if(textureMode != 0)
+		textureColor = texture(textureSampler, texCoord);
 
-All the tests are using textured Phong vertex shader, constant single PAT v2 (vec3+vec4)
-read from the same index in the buffer, 2x uniform matrix (mat4+mat4) as
-view and perspective matrix, and packed attributes (2x uvec4).
-Geometry is provided in a way to not produce any fragments in the rasterizer.
+	// surface color
+	if(textureMode == 0x1e01)  // if GL_REPLACE
 
-### All 1 index performance, the pipeline uses primitive restart
+		// apply GL_REPLACE texture
+		fragColor = vec4(textureColor.rgb, textureColor.a*color.a);
 
-The test uses the value 1 in the index buffer for all vertices in the scene.
-It is rendered by single vkCmdDrawIndexed() call while using pipeline with primitive restart
-and one per-scene triangle strip (composed of indices with value 1).
+	else {
 
-### All 1 index performance, the pipeline uses single per-scene triangle strip
+		// l - vertex to light direction, in eye coordinates
+		vec3 l = lightPosition.xyz;
+		if(lightPosition.w != 0.) {
+			if(lightPosition.w != 1.)
+				l /= lightPosition.w;
+			l -= eyePosition;
+		}
+		float lLen = length(l);
+		l /= lLen;
 
-The test uses the value 1 in the index buffer for all vertices in the scene.
-It is rendered by single vkCmdDrawIndexed() call
-and one per-scene triangle strip (composed of indices with value 1).
+		// attenuation
+		float attenuation = 1.;
+		if(lightPosition.w != 0.)
+			attenuation /= lightData[0].x + lightData[0].y*lLen + lightData[0].z*lLen*lLen;
 
-### All 1 index performance, the pipeline uses indexed triangle list
+		// n - Normal of vertex, in eye coordinates
+		vec3 n = normalize(eyeNormal);
 
-The test uses the value 1 in the index buffer for all vertices in the scene.
-It is rendered by single vkCmdDrawIndexed() call as triangle list
-(composed of indices with value 1).
+		// invert normals on back facing triangles
+		if(gl_FrontFacing == false)
+			n = -n;
 
-### The same vertex triangle strip performance
+		// unpack material data
+		vec3 ambientColor = vec3(materialData[0].rgb);
+		vec3 diffuseColor = vec3(materialData[0].a, materialData[1].rg);
+		vec3 specularColor = vec3(materialData[1].ba, materialData[2].r);
+		vec3 emissiveColor = vec3(materialData[2].gba);
 
-The test uses vertices with the same coordinates and attributes for the whole scene.
-All the vertices are rendered by single vkCmdDraw() call while using triangle strip.
+		// unpack light data
+		vec3 ambientLight = vec3(lightData[0].a, lightData[1].rg);
+		vec3 diffuseLight = vec3(lightData[1].ba, lightData[2].r);
+		vec3 specularLight = vec3(lightData[2].gba);
 
-### The same vertex triangle list performance
+		// Lambert's diffuse reflection
+		float nDotL = dot(n, l);
+		fragColor.rgb = (ambientLight * ambientColor +
+		                 diffuseLight * diffuseColor * max(nDotL, 0.)) * attenuation;
+		fragColor.a = color.a;
 
-The test uses vertices with the same coordinates and attributes for the whole scene.
-All the vertices are rendered by single vkCmdDraw() call while using triangle list.
+		// global ambient and emissive color
+		fragColor.rgb += globalAmbientLight * ambientColor + emissiveColor;
 
+		// apply texture
+		if(textureMode != 0) {
+
+			if(textureMode == 0x2100) // GL_MODULATE
+				fragColor = fragColor * textureColor;
+			else if(textureMode == 0x2101)  // GL_DECAL
+				fragColor = vec4(fragColor.rgb * (1-textureColor.a) + textureColor.rgb * textureColor.a, fragColor.a);
+
+		}
+
+		// specular effect (it is applied after the texture)
+		if(nDotL > 0.) {
+			vec3 r = reflect(-l, n);
+			float rDotV = dot(r, -normalize(eyePosition));
+			if(rDotV > 0.)
+				fragColor.rgb += specularLight * specularColor * pow(rDotV, shininess) * attenuation;
+		}
+
+	}
+
+}
+```
+
+
+### Textured Phong, not packed uniforms
+
+The test is the same as [the previous one](#textured-phong-packed-uniforms) except that
+it does not pack material and light data that are stored in uniforms.
+The material and light data takes 164 bytes (compared to 132 bytes when the data are packed).
+
+The uniforms looks like:
+
+```c++
+layout(binding=0,std140) uniform Material {
+	vec4 ambientColor;
+	vec4 diffuseColor;
+	vec4 specularColor;
+	vec4 emissiveColor;
+	float shininess;
+	int textureMode; // 0 - no texturing, 0x2100 - modulate, 0x1e01 - replace, 0x2101 - decal*/
+};
+layout(binding=1) uniform Global {
+	vec3 globalAmbientLight;
+};
+layout(binding=2) uniform Light {
+	vec4 lightPosition;
+	vec4 lightAttenuation;
+	vec4 ambientLight;
+	vec4 diffuseLight;
+	vec4 specularLight;
+};
+layout(binding=3) uniform sampler2D textureSampler;
+```
+
+
+### Simplified Phong, no texture, no specular
+
+The test uses simplified Phong without specular effect and without texturing.
+It renders ten full-framebuffer quads, from the farthest to the closest.
+
+The fragment shader code follows:
+
+```c++
+layout(location=0) in smooth vec3 eyePosition;
+layout(location=1) in smooth vec3 eyeNormal;
+
+layout(binding=0,std140) uniform Material {
+	vec4 ambientColor;  // alpha not used
+	vec4 diffuseColor;  // alpha used for transparency
+};
+layout(binding=1) uniform Global {
+	vec3 globalAmbientLight;
+};
+layout(binding=2) uniform Light {
+	vec4 lightData[3]; // position on offset 0, attenuation on offset 12, ambient on offset 24, diffuse on offset 36
+};
+
+layout(location=0) out vec4 fragColor;
+
+
+void main() {
+
+	// l - vertex to light direction, in eye coordinates
+	vec3 l = lightData[0].xyz - eyePosition;
+	float lLen = length(l);
+	l /= lLen;
+
+	// attenuation
+	float attenuation = 1. / (lightData[0].w + lightData[1].x*lLen + lightData[1].y*lLen*lLen);
+
+	// n - Normal of vertex, in eye coordinates
+	vec3 n = normalize(eyeNormal);
+
+	// invert normals on back facing triangles
+	if(gl_FrontFacing == false)
+		n = -n;
+
+	// unpack data
+	vec3 ambientLight = vec3(lightData[1].zw, lightData[2].x);
+	vec3 diffuseLight = lightData[2].yzw;
+
+	// Lambert's diffuse reflection
+	float nDotL = dot(n,l);
+	fragColor.rgb = (ambientLight * ambientColor.rgb +
+	                 diffuseLight * diffuseColor.rgb * max(nDotL, 0.)) * attenuation;
+	fragColor.a = diffuseColor.a;
+
+	// global ambient
+	fragColor.rgb += globalAmbientLight * ambientColor.rgb;
+
+}
+```
+
+
+### Simplified Phong, no texture, no specular, one uniform for material and light data
+
+The test is the same as [the previous one](#simplified-phong-no-texture-no-specular) except that
+it uses only one uniform with all material and light data:
+
+```c++
+layout(binding=0,std140) uniform AllInOneUniform {
+	vec4 ambientColor;  // alpha not used
+	vec4 diffuseColor;  // alpha used for transparency
+	vec4 globalAmbientLight; // only rgb values used
+	vec4 lightData[3]; // position on offset 0, attenuation on offset 12, ambient on offset 24, diffuse on offset 36
+};
+```
+
+
+### Constant color from uniform, 1x uniform (vec4) in FS
+
+The test just assigns color given by vec4 uniform to the output fragment.
+It renders ten full-framebuffer quads, from the farthest to the closest.
+
+The FS looks like:
+
+```c++
+layout(binding=0,std140) uniform Color {
+	vec4 color;
+};
+
+void main()
+{
+	fragColor = color;
+}
+```
+
+
+### Constant color from uniform, 1x uniform (uint) in FS
+
+The test is the same as [the previous one](#constant-color-from-uniform-1x-uniform-vec4-in-fs) except that
+it uses uint uniform for the color:
+
+```c++
+layout(binding=0) uniform Color {
+	uint color;
+};
+
+void main()
+{
+	fragColor = unpackUnorm4x8(color);
+}
+```
+
+
+## Transfer of consecutive memory blocks
+
+The transfer tests measure the copy throughput between host and device memory.
+The transfers use blocks of various sizes. For very small blocks, transfer overhead is usually apparent.
+For very large blocks, the throughput limit often shows itself.
+
+```c++
+for(size_t offset = 0; offset < transferSize*numTransfers; offset += transferSize)
+{
+	vkCmdCopyBuffer(
+		commandBuffer,
+		srcBuffer,
+		dstBuffer,
+		1,  // regionCount
+		&(const vk::BufferCopy&)vk::BufferCopy(  // pRegions
+			offset,  // srcOffset
+			offset,  // dstOffset
+			transferSize  // size
+		)
+	);
+}
+```
+
+
+## Transfer of spaced memory blocks
+
+The transfer test of spaced memory blocks tries to avoid possible optimization of concatenating of consecutive transfers.
+So, not tranfered memory blocks are put inbetween transfered memory blocks
+
+The transfer code follows:
+
+```c++
+for(size_t offset = 0; offset < numTransfers*transferSize*2; offset += transferSize*2)
+{
+	vkCmdCopyBuffer(
+		commandBuffer,
+		srcBuffer,
+		dstBuffer,
+		1,  // regionCount
+		&(const vk::BufferCopy&)vk::BufferCopy(  // pRegions
+			offset,  // srcOffset
+			offset,  // dstOffset
+			transferSize  // size
+		)
+	);
+}
+```
