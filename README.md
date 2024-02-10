@@ -6,11 +6,23 @@ vkperf tests various performance characteristics of Vulkan devices.
 It is aimed at developer needs. It provides developers with performance characteristics of their Vulkan devices,
 allowing them to make better decisions during the design of their rendering algorithms and the design of Vulkan-related code in general.
 
+The tests cover six main areas:
+* Triangle throughput
+* Vertex and geometry shader throughput
+* Attributes and buffers overhead
+* Transformations
+* Fragment throughput
+* Transfer throughput
+
+For more information, see [sample vkperf output](SampleOutput.md), [Tests overview section](#tests-overview)
+or [Detailed test description](ListOfTests.md).
+
 
 ## Usage
-<pre>
+
+```
 vkperf [deviceNameFilter] [deviceIndex] [options]
-   --long - perform long test; testing time is extended to 60 seconds
+   --long - perform long test; testing time is extended to 20 seconds
             from the default of 2 seconds
    --minimal - perform minimal test; for debugging purposes,
                number of triangles used for testing is lagerly
@@ -23,10 +35,11 @@ vkperf [deviceNameFilter] [deviceIndex] [options]
                                 during the main test
    --debug - print additional debug info
    --help or -h - prints the usage information
-</pre>
+```
 
 
-## Tests performed
+## Tests overview
+
 * Triangle throughput
   * Triangle list
   * Triangle strips
@@ -63,9 +76,10 @@ vkperf [deviceNameFilter] [deviceIndex] [options]
 
 
 ## License
+
 Public domain
 
 
 ## Author
-PC John (Jan Pečiva, peciva _at fit.vut.cz, https://github.com/pc-john, https://www.fit.vut.cz/~peciva)
 
+PC John (Jan Pečiva, peciva _at fit.vut.cz, https://github.com/pc-john, https://www.fit.vut.cz/~peciva)

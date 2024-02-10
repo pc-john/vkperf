@@ -24,7 +24,7 @@ using namespace std;
 static const string appName = "vkperf";
 static const uint32_t appVersion = VK_MAKE_VERSION(0,99,5);
 static constexpr const vk::Extent2D defaultFramebufferExtent(1920,1080);  // FullHD resultion (allowed values are up to 4096x4096 which are guaranteed by Vulkan; for bigger values, test maxFramebufferWidth and maxFramebufferHeight of vk::PhysicalDeviceLimits)
-static constexpr const double longTestTime = 60.;
+static constexpr const double longTestTime = 20.;
 static constexpr const double standardTestTime = 2.;
 static constexpr const uint32_t numTrianglesStandard = uint32_t(1000*1e3);
 static constexpr const uint32_t numTrianglesIntegratedGpu = uint32_t(100*1e3);
