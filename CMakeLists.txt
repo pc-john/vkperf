@@ -84,14 +84,14 @@ set(APP_SHADERS
 	phongNoSpecularSingleUniform.frag
 	)
 
+# dependencies
+set(CMAKE_MODULE_PATH "${${APP_NAME}_SOURCE_DIR};${CMAKE_MODULE_PATH}")
+find_package(Vulkan REQUIRED)
+
 # executable
 include(CMakeMacros.cmake)
 add_shaders("${APP_SHADERS}" APP_SHADER_DEPS)
 add_executable(${APP_NAME} ${APP_SOURCES} ${APP_INCLUDES} ${APP_SHADER_DEPS})
-
-# dependencies
-set(CMAKE_MODULE_PATH "${${APP_NAME}_SOURCE_DIR};${CMAKE_MODULE_PATH}")
-find_package(Vulkan REQUIRED)
 
 # target
 target_include_directories(${APP_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/shaders)
