@@ -9,7 +9,7 @@ allowing them to make better decisions during the design of their rendering algo
 The tests cover six main areas:
 * Triangle throughput
 * Vertex and geometry shader throughput
-* Attributes and buffers overhead
+* Attributes and buffers performance
 * Transformations
 * Fragment throughput
 * Transfer throughput

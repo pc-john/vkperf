@@ -10,7 +10,7 @@ The list of tests follows:
 4. [Triangle strips of various lengths](#triangle-strips-of-various-lengths)
 5. [Indexed triangle strips of various lengths](#indexed-triangle-strips-of-various-lengths)
 6. [Primitive restart indexed triangle strips of various lengths](#primitive-restart-indexed-triangle-strips-of-various-lengths)
-7. [Primitive restart, each triangle is replaced by one -1](#primitive-restart-each-triangle-is-replaced-by-minus-one)
+7. [Primitive restart, each triangle is replaced by one -1](#primitive-restart-each-triangle-is-replaced-by-one--1)
 8. [Primitive restart, only zeros in the index buffer](#primitive-restart-only-zeros-in-the-index-buffer)
 9. [Instancing throughput of vkCmdDraw()](#instancing-throughput-of-vkcmddraw)
 10. [Instancing throughput of vkCmdDrawIndexed()](#instancing-throughput-of-vkcmddrawindexed)
@@ -23,13 +23,13 @@ The list of tests follows:
 17. [VkDrawIndexedIndirectCommand processing throughput](#vkdrawindexedindirectcommand-processing-throughput)
 18. [VkDrawIndexedIndirectCommand processing throughput with stride 32](#vkdrawindexedindirectcommand-processing-throughput-with-stride)
 19. [VS throughput using vkCmdDraw()](#vs-throughput-using-vkcmddraw)
-20. [VS throughput using vkCmdDrawIndexed()](#vs-thoughput-using-vkcmddrawindexed)
+20. [VS throughput using vkCmdDrawIndexed()](#vs-throughput-using-vkcmddrawindexed)
 21. [VS producing output position from VertexIndex and InstanceIndex using vkCmdDraw()](#vs-producing-output-position-from-vertexindex-and-instanceindex-using-vkcmddraw)
-22. [VS producing output position from VertexIndex and InstanceIndex using vkCmdDrawIndexed()](#vs-producing-output-position-from-vertexindex-and-instanceindex-vkcmddrawindexed)
+22. [VS producing output position from VertexIndex and InstanceIndex using vkCmdDrawIndexed()](#vs-producing-output-position-from-vertexindex-and-instanceindex-using-vkcmddrawindexed)
 23. [GS one triangle in and no triangle out](#gs-one-triangle-in-and-no-triangle-out)
 24. [GS one triangle in and single constant triangle out](#gs-one-triangle-in-and-single-constant-triangle-out)
 25. [GS one triangle in and two constant triangles out](#gs-one-triangle-in-and-two-constant-triangles-out)
-26. ... 44. [Attributes and buffers](#attributes-and-buffers)
+26. ... 44. [Attributes and buffers performance](#attributes-and-buffers-performance)
 - [Attribute tests](#attribute-tests)
 - [Buffer tests](#buffer-tests)
 - [Interleaved attribute tests](#interleaved-attribute-tests)
@@ -38,7 +38,7 @@ The list of tests follows:
 - [Attribute conversion test](#attribute-conversion-test)
 45. ... 59. [Transformations](#transformations)
 - [Uniform vs buffer vs attribute matrix tests](#uniform-vs-buffer-vs-attribute-matrix-tests)
-- [Single whole scene matrix test](#single-whole-scene-matrix-test)
+- [Single per-scene scene matrix test](#single-per-scene-matrix-test)
 - [Single per-triangle matrix tests](#single-per-triangle-matrix-tests)
 - [Three matrices test](#three-matrices-test)
 - [Five matrices tests](#five-matrices-tests)
@@ -616,7 +616,7 @@ It uses empty vertex shader and single vkCmdDraw() call
 as in the [previous two tests](#gs-one-triangle-in-and-no-triangle-out).
 
 
-## Attribute and buffer performance
+## Attributes and buffers performance
 
 All the tests in this section measure triangle rendering performance while using
 one to four attributes or buffers in vertex shader.
@@ -988,9 +988,10 @@ array<const vk::VertexInputAttributeDescription,4>{  // pVertexAttributeDescript
 ```
 
 
-## Matrix performance
+## Transformations
 
-The matrix performance tests use one to five matrices in vertex or geometry shader.
+The transformation tests focus on matrix operations and matrix sourcing into the shaders.
+The tests use one to five matrices in vertex or geometry shader.
 Matrices are read from uniform variable, buffer, attribute, shader constant or specialization constant.
 The matrices are either per-triangle or per-scene.
 Per-triangle matrices are read from different memory locations.
