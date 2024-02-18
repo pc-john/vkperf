@@ -9939,19 +9939,26 @@ static void frame()
 
 		// record the tests in the sequence
 		for(auto i=seqStart; i!=it; i++) {
+
+			// barrier between tests
 			beginTestBarrier(primaryCommandBuffer.get());
-			if((*i)->type != Test::Type::TransferThroughput)
-				beginRenderPass(primaryCommandBuffer.get());
-			primaryCommandBuffer->executeCommands((*i)->secondaryCommandBuffer.get());
-			if((*i)->type != Test::Type::TransferThroughput)
-				endRenderPass(primaryCommandBuffer.get());
-			else {
+
+			if((*i)->type == Test::Type::TransferThroughput)
+			{
+				// run transfer operation
+				primaryCommandBuffer->executeCommands((*i)->secondaryCommandBuffer.get());
+
 				// transfer tests need some "work" between the transfers
-				// (Nvidia was showing very high transfer rates without it on some cards like GF4090)
+				// (Nvidia was showing wrong very high transfer rates without this code on some cards like GF4090)
 				beginTestBarrier(primaryCommandBuffer.get());
 				beginRenderPass(primaryCommandBuffer.get(), vk::SubpassContents::eInline);
 				primaryCommandBuffer->bindPipeline(vk::PipelineBindPoint::eGraphics, attributelessConstantOutputPipeline.get());  // bind pipeline
 				primaryCommandBuffer->draw(3, 1, 0, 0);  // vertexCount, instanceCount, firstVertex, firstInstance
+				endRenderPass(primaryCommandBuffer.get());
+			}
+			else {
+				beginRenderPass(primaryCommandBuffer.get());
+				primaryCommandBuffer->executeCommands((*i)->secondaryCommandBuffer.get());
 				endRenderPass(primaryCommandBuffer.get());
 			}
 		}
@@ -10369,14 +10376,14 @@ int main(int argc,char** argv)
 						remainders.push_back(r);
 					}
 
-					size_t validNumbers = remainders.size();
+					unsigned validNumbers = unsigned(remainders.size());
 					if(validNumbers == 0)
 						cout << "0";
 					else
 					{
 						// print number
-						unsigned numbersBeforeDecimalPoint = unsigned((validNumbers-1) % 3) + 1;
-						size_t exponentIndex = (validNumbers-1) / 3;
+						unsigned numbersBeforeDecimalPoint = ((validNumbers-1) % 3) + 1;
+						unsigned exponentIndex = (validNumbers-1) / 3;
 						unsigned i=0;
 						for(; i<numbersBeforeDecimalPoint; i++) {
 							cout << char('0' + remainders.back());
@@ -10384,8 +10391,8 @@ int main(int argc,char** argv)
 						}
 						if(!remainders.empty()) {
 							cout << ".";
-							if(4-i > remainders.size())
-								i = 4 - remainders.size();
+							if(4-i > unsigned(remainders.size()))
+								i = 4 - unsigned(remainders.size());
 							for(; i<4; i++) {
 								cout << char('0' + remainders.back());
 								remainders.pop_back();
@@ -10397,7 +10404,7 @@ int main(int argc,char** argv)
 							cout << " ";
 						else
 							if(exponentIndex < 7) {
-								constexpr array<const char*,7> units = { " ", " kilo-", " mega-", " giga-", " tera-", " peta-", " exa-" };
+								constexpr const array<const char*,7> units = { " ", " kilo-", " mega-", " giga-", " tera-", " peta-", " exa-" };
 								cout << units[exponentIndex];
 							}
 							else
