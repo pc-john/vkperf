@@ -653,8 +653,9 @@ struct Test {
 	enum class Type { WarmUp, TriangleThroughput, VertexAndGeometryShader,
 	                  AttributesAndBuffers, Transformations, FragmentThroughput, TransferThroughput };
 	Type type;
+	double resultMultiplier = 1.;
+	const char* unitString;
 	union {
-		size_t invocationsMultiplier;  // used in VertexAndGeometryShader tests
 		double numRenderedItems;  // used in FragmentThroughput tests
 		size_t numTransfers;  // used in TransferThroughput tests
 	};
@@ -663,7 +664,7 @@ struct Test {
 	Func func;
 	vk::UniqueCommandBuffer secondaryCommandBuffer;
 	Test(const char* text_, Type t, Func func_) : text(text_), type(t), func(func_)  {}
-	Test(const char* text_, Type t, size_t invocationsMultiplier_, Func func_) : text(text_), type(t), invocationsMultiplier(invocationsMultiplier_), func(func_)  {}
+	Test(const char* text_, Type t, double resultMultiplier_, const char* unitString_, Func func_) : text(text_), type(t), resultMultiplier(resultMultiplier_), unitString(unitString_), func(func_)  {}
 	Test(const char* groupText_, uint32_t groupVariable_, const char* text_, Type t, Func func_) : groupText(groupText_), groupVariable(groupVariable_), text(text_), type(t), func(func_)  {}
 };
 
@@ -778,6 +779,8 @@ static void initTests()
 		"      single per-scene vkCmdDraw() call, attributeless,\n"
 		"      constant VS output):                     ",
 		Test::Type::TriangleThroughput,
+		1.,  // resultMultiplier
+		nullptr,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -793,6 +796,8 @@ static void initTests()
 		"      per-scene vkCmdDrawIndexed() call, no vertices shared between triangles,\n"
 		"      attributeless, constant VS output):      ",
 		Test::Type::TriangleThroughput,
+		1.,  // resultMultiplier
+		nullptr,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -809,6 +814,8 @@ static void initTests()
 		"      (triangle list primitive type, single per-scene vkCmdDrawIndexed() call,\n"
 		"      attributeless, constant VS output):      ",
 		Test::Type::TriangleThroughput,
+		1.,  // resultMultiplier
+		nullptr,
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(stripIndexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -1155,6 +1162,8 @@ static void initTests()
 		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      attributeless):                          ",
 		Test::Type::TriangleThroughput,
+		0.01,  // resultMultiplier
+		"indirectRecords/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, attributelessConstantOutputPipeline.get(),
@@ -1164,7 +1173,7 @@ static void initTests()
 			if(enabledFeatures.multiDrawIndirect)
 				cb.drawIndirect(indirectBuffer.get(),  // buffer
 				                0,  // offset
-				                numTriangles,  // drawCount
+				                numTriangles/100,  // drawCount
 				                sizeof(vk::DrawIndirectCommand));  // stride
 			else
 				tests[timestampIndex/2].enabled = false;
@@ -1177,6 +1186,8 @@ static void initTests()
 		"      (per-triangle VkDrawIndirectCommand, one vkCmdDrawIndirect() call,\n"
 		"      attributeless):                          ").c_str(),
 		Test::Type::TriangleThroughput,
+		0.01,  // resultMultiplier
+		"indirectRecords/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, attributelessConstantOutputPipeline.get(),
@@ -1186,7 +1197,7 @@ static void initTests()
 			if(enabledFeatures.multiDrawIndirect)
 				cb.drawIndirect(indirectStrideBuffer.get(),  // buffer
 				                0,  // offset
-				                numTriangles,  // drawCount
+				                numTriangles/100,  // drawCount
 				                indirectRecordStride);  // stride
 			else
 				tests[timestampIndex/2].enabled = false;
@@ -1196,9 +1207,12 @@ static void initTests()
 
 	tests.emplace_back(
 		"   VkDrawIndexedIndirectCommand processing throughput\n"
-		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
-		"      call, attributeless):                    ",
+		"      (per-triangle VkDrawIndexedIndirectCommand,\n"
+		"      1x vkCmdDrawIndexedIndirect() call,\n"
+		"      attributeless):                          ",
 		Test::Type::TriangleThroughput,
+		0.01,  // resultMultiplier
+		"indirectRecords/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -1209,7 +1223,7 @@ static void initTests()
 			if(enabledFeatures.multiDrawIndirect)
 				cb.drawIndexedIndirect(indirectIndexedBuffer.get(),  // buffer
 				                       0,  // offset
-				                       numTriangles,  // drawCount
+				                       numTriangles/100,  // drawCount
 				                       sizeof(vk::DrawIndexedIndirectCommand));  // stride
 			else
 				tests[timestampIndex/2].enabled = false;
@@ -1219,9 +1233,12 @@ static void initTests()
 
 	tests.emplace_back(
 		("   VkDrawIndexedIndirectCommand processing throughput with stride " + to_string(indirectRecordStride) + "\n"
-		"      (per-triangle VkDrawIndexedIndirectCommand, 1x vkCmdDrawIndexedIndirect()\n"
-		"      call, attributeless):                    ").c_str(),
+		"      (per-triangle VkDrawIndexedIndirectCommand,\n"
+		"      1x vkCmdDrawIndexedIndirect() call,\n"
+		"      attributeless):                          ").c_str(),
 		Test::Type::TriangleThroughput,
+		0.01,  // resultMultiplier
+		"indirectRecords/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -1232,7 +1249,7 @@ static void initTests()
 			if(enabledFeatures.multiDrawIndirect)
 				cb.drawIndexedIndirect(indirectIndexedStrideBuffer.get(),  // buffer
 				                       0,  // offset
-				                       numTriangles,  // drawCount
+				                       numTriangles/100,  // drawCount
 				                       indirectRecordStride);  // stride
 			else
 				tests[timestampIndex/2].enabled = false;
@@ -1245,7 +1262,8 @@ static void initTests()
 		"      constant output position (per-scene vkCmdDraw() call,\n"
 		"      no attributes, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
-		3,  // invocationsMultiplier
+		3.,  // resultMultiplier
+		"vertices/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, attributelessConstantOutputPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1261,7 +1279,8 @@ static void initTests()
 		"      constant output position (per-scene vkCmdDrawIndexed() call,\n"
 		"      no attributes, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
-		3,  // invocationsMultiplier
+		3.,  // resultMultiplier
+		"vertices/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -1278,7 +1297,8 @@ static void initTests()
 		"      using vkCmdDraw() (single per-scene vkCmdDraw() call,\n"
 		"      attributeless, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
-		3,  // invocationsMultiplier
+		3.,  // resultMultiplier
+		"vertices/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			beginTest(cb, attributelessInputIndicesPipeline.get(), simplePipelineLayout.get(), timestampIndex,
@@ -1294,7 +1314,8 @@ static void initTests()
 		"      using vkCmdDrawIndexed() (single per-scene vkCmdDrawIndexed() call,\n"
 		"      attributeless, no fragments produced):   ",
 		Test::Type::VertexAndGeometryShader,
-		3,  // invocationsMultiplier
+		3.,  // resultMultiplier
+		"vertices/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			cb.bindIndexBuffer(indexBuffer.get(), 0, vk::IndexType::eUint32);
@@ -1310,7 +1331,8 @@ static void initTests()
 		"   GS one triangle in and no triangle out\n"
 		"      (empty VS, attributeless):               ",
 		Test::Type::VertexAndGeometryShader,
-		1,  // invocationsMultiplier
+		1.,  // resultMultiplier
+		"invocations/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -1340,7 +1362,8 @@ static void initTests()
 		"   GS one triangle in and single constant triangle out\n"
 		"      (empty VS, attributeless):               ",
 		Test::Type::VertexAndGeometryShader,
-		1,  // invocationsMultiplier
+		1.,  // resultMultiplier
+		"invocations/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -1370,7 +1393,8 @@ static void initTests()
 		"   GS one triangle in and two constant triangles out\n"
 		"      (empty VS, attributeless):               ",
 		Test::Type::VertexAndGeometryShader,
-		1,  // invocationsMultiplier
+		1.,  // resultMultiplier
+		"invocations/s",
 		[](vk::CommandBuffer cb, uint32_t timestampIndex, uint32_t)
 		{
 			if(enabledFeatures.geometryShader) {
@@ -10430,7 +10454,7 @@ int main(int argc,char** argv)
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
-							printResultLine(t.text, double(numTriangles)/time_ns*1e9, "triangles/s");
+							printResultLine(t.text, double(numTriangles)*t.resultMultiplier/time_ns*1e9, t.unitString ? t.unitString : "triangles/s");
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							triangleTestsNumRounds = max(t.renderingTimes.size(), triangleTestsNumRounds);
 						}
@@ -10451,8 +10475,7 @@ int main(int argc,char** argv)
 						if(t.enabled) {
 							sort(t.renderingTimes.begin(), t.renderingTimes.end());
 							double time_ns = double(t.renderingTimes[(t.renderingTimes.size()-1)/2]) * timestampPeriod_ns;
-							printResultLine(t.text, double(numTriangles)*t.invocationsMultiplier/time_ns*1e9,
-							                (t.invocationsMultiplier == 3) ? "vertices/s" : "invocations/s");
+							printResultLine(t.text, double(numTriangles)*t.resultMultiplier/time_ns*1e9, t.unitString);
 							renderingTimeSum = accumulate(t.renderingTimes.begin(), t.renderingTimes.end(), renderingTimeSum);
 							vertexTestsNumRounds = max(t.renderingTimes.size(), vertexTestsNumRounds);
 						}
