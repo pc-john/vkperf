@@ -654,7 +654,7 @@ struct Test {
 	                  AttributesAndBuffers, Transformations, FragmentThroughput, TransferThroughput };
 	Type type;
 	double resultMultiplier = 1.;
-	const char* unitString;
+	const char* unitString = nullptr;
 	union {
 		double numRenderedItems;  // used in FragmentThroughput tests
 		size_t numTransfers;  // used in TransferThroughput tests
